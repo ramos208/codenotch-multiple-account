@@ -2,7 +2,7 @@
 
 ![Codenotch](docs/design/codenotch-banner.png)
 
-[![CI](https://github.com/vinzdg/codenotch/actions/workflows/ci.yml/badge.svg)](https://github.com/vinzdg/codenotch/actions/workflows/ci.yml)
+[![CI](https://github.com/ramos208/codenotch-multiple-account/actions/workflows/ci.yml/badge.svg)](https://github.com/ramos208/codenotch-multiple-account/actions/workflows/ci.yml)
 ![Platform](https://img.shields.io/badge/platform-macOS%2026%2B-black)
 ![Swift](https://img.shields.io/badge/swift-5-orange)
 ![License](https://img.shields.io/badge/license-MIT-green)
@@ -21,13 +21,12 @@ two never disagree.
 
 ## Download
 
-[![Download for macOS](docs/design/download-macos.svg)](../../releases/latest/download/Codenotch.dmg)
+[![Download for macOS](docs/design/download-macos.svg)](https://github.com/ramos208/codenotch-multiple-account/releases/latest/download/Codenotch.dmg)
 
-That button is the disk image itself, not the page it sits on — the asset is
-named `Codenotch.dmg` in every release, so `releases/latest/download/` always
-resolves to the newest one and the link never needs updating. Signed,
-notarized, and updating itself from then on. Take this one unless you have a
-reason not to; the [release page](../../releases/latest) has the notes.
+That button downloads the newest `Codenotch.dmg` directly. Builds published by
+this fork are locally signed but not Apple-notarized; if macOS quarantines the
+download, follow the one-time command below. The [release page](https://github.com/ramos208/codenotch-multiple-account/releases/latest)
+has the notes and checksums.
 
 To try unreleased `main` without an Xcode install, the [preview
 build](../../releases/tag/preview) is rebuilt from every commit, and the
@@ -48,7 +47,7 @@ instead, see [Building](#building).
 
 ## Windows
 
-[![Download for Windows](docs/design/download-windows.svg)](../../releases/latest/download/Codenotch-Setup.exe)
+[![Download for Windows](docs/design/download-windows.svg)](https://github.com/ramos208/codenotch-multiple-account/releases/latest/download/Codenotch-Setup.exe)
 
 A Windows port — Rust/Tauri 2, same design and providers — lives in [`windows/`](windows/README.md).
 The button is the installer itself, named `Codenotch-Setup.exe` in every release for the same
@@ -58,6 +57,19 @@ and fetches WebView2 if Windows does not already have it.
 The installer is not code-signed, so the first time it runs SmartScreen says *Windows protected
 your PC*. Choose **More info**, then **Run anyway**. Every Windows change also leaves an
 installer on its [Windows Package run](../../actions/workflows/windows-package.yml).
+
+## What's new in 1.22.0
+
+- Add and display multiple accounts for each supported provider without switching the provider app's active account.
+- Separate account management by provider, with duplicate-email protection inside each provider.
+- Isolated browser or CLI authentication for Codex, Claude, Antigravity, Cursor, Grok and Kimi.
+- Independent browser sessions for DeepSeek, QianwenAI and MiniMax.
+- Separate Keychain-backed API-key accounts for Ollama Cloud, Apify, GLM / Z.ai, Amp, Kilo, OpenCode and GitHub Copilot.
+- A compact Add Account grid grouped into **Sign in with browser**, **API key**, and **Unavailable** sections.
+- Compact tooltip titles use provider codes such as **AG** and **CX**, with the monthly subscription end beneath the title when a provider reports it.
+- Menu-bar operation continues when the Dock window is closed.
+
+![Codenotch multi-account provider picker](docs/design/multi-account-provider-picker.png)
 
 ## Connect your phone
 

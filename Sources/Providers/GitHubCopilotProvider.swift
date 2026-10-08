@@ -3,18 +3,32 @@ import Foundation
 /// Reads GitHub Copilot quotas from GitHub's endpoint used by its editors.
 /// The token is borrowed from GitHub CLI or an existing environment variable.
 actor GitHubCopilotProvider: UsageProvider {
-    nonisolated let id = "copilot"
-    nonisolated let displayName = "GitHub Copilot"
+    nonisolated let id: String
+    nonisolated let displayName: String
     nonisolated let glyph = ProviderGlyph.copilot
 
     private let endpoint = URL(string: "https://api.github.com/copilot_internal/user")!
     private let session: URLSession
     private let loadCredentials: @Sendable () throws -> GitHubCopilotCredentials
+    nonisolated private let loadAccount: @Sendable () -> ProviderAccount?
 
     init(session: URLSession = .shared,
          loadCredentials: (@Sendable () throws -> GitHubCopilotCredentials)? = nil) {
+        self.id = "copilot"
+        self.displayName = "GitHub Copilot"
         self.session = session
         self.loadCredentials = loadCredentials ?? { try GitHubCopilotCredentials.load() }
+        self.loadAccount = { GitHubCopilotCredentials.account() }
+    }
+
+    init(id: String, displayName: String, session: URLSession = .shared,
+         loadCredentials: @escaping @Sendable () throws -> GitHubCopilotCredentials,
+         loadAccount: @escaping @Sendable () -> ProviderAccount?) {
+        self.id = id
+        self.displayName = displayName
+        self.session = session
+        self.loadCredentials = loadCredentials
+        self.loadAccount = loadAccount
     }
 
     nonisolated var signInRoute: SignInRoute {
@@ -22,7 +36,7 @@ actor GitHubCopilotProvider: UsageProvider {
     }
 
     nonisolated func account() -> ProviderAccount? {
-        GitHubCopilotCredentials.account()
+        loadAccount()
     }
 
     func fetchSnapshot() async throws -> ProviderSnapshot {

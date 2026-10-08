@@ -32,6 +32,28 @@ enum ReleaseNotes {
     static var all: [ReleaseNote] {
         [
             ReleaseNote(
+                version: "1.22.0",
+                headline: L10n.t("Keep every account in view, add another without replacing the first, and tell them apart at a glance."),
+                changes: [
+                    ReleaseNote.Change(
+                        title: L10n.t("Multiple accounts, side by side"),
+                        detail: L10n.t("Codenotch keeps separate accounts for supported login and API-key providers, with their own readings, names and removal controls.")
+                    ),
+                    ReleaseNote.Change(
+                        title: L10n.t("A clearer Add Account window"),
+                        detail: L10n.t("Providers are arranged in a compact grid and grouped by browser sign-in, API key and unavailable integrations.")
+                    ),
+                    ReleaseNote.Change(
+                        title: L10n.t("Short account titles"),
+                        detail: L10n.t("Tooltip headers use provider shortcuts such as AG and CX, and the subtitle shows the plan with its monthly subscription end when the provider reports one.")
+                    ),
+                    ReleaseNote.Change(
+                        title: L10n.t("Menu-bar companion"),
+                        detail: L10n.t("Codenotch can stay available from the menu bar without occupying the Dock, while the notch continues running.")
+                    ),
+                ]
+            ),
+            ReleaseNote(
                 version: "1.21.0",
                 headline: L10n.t("Custom endpoints speak Anthropic and Gemini, llama.cpp shows its speed, and Antigravity reads without the IDE open."),
                 changes: [

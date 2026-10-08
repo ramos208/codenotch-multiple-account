@@ -29,6 +29,9 @@ actor CodexLocalProvider: UsageProvider {
 
     nonisolated var signInRoute: SignInRoute {
         guard profile.slug != nil else { return .openApp(bundleID: "com.openai.codex", name: "Codex") }
+        if profile.isManaged {
+            return .openApp(bundleID: "com.openai.codex", name: "Codex")
+        }
         return .command(profile.signInCommand, name: displayName,
                         install: URL(string: "https://developers.openai.com/codex/cli"))
     }

@@ -433,6 +433,8 @@ struct SettingsView: View {
     /// already be centred, in which case the action has no visible movement;
     /// the acknowledgement keeps the button from feeling inert.
     @State private var didRecentre = false
+    @State private var showingAddAccount = false
+    @State private var managedAccountTab: ManagedAccountProvider = .codex
 
     /// Whether this Mac draws the notch as its own cutout — the one placement
     /// where the hardware sets the size outright, and so the only one where the
@@ -462,6 +464,7 @@ struct SettingsView: View {
     var ollamaRelay: OllamaActivityRelay? = nil
     var lmstudioMetrics: LMStudioMetrics? = nil
     var usageStore: UsageStore? = nil
+    var accountProfileManager: AccountProfileManager? = nil
     var previewResetAlert: (() -> Void)? = nil
     var previewSessionLimitAlert: (() -> Void)? = nil
     var previewWeeklyLimitAlert: (() -> Void)? = nil
@@ -572,6 +575,23 @@ struct SettingsView: View {
             }
         .onReceive(preferences.$customEndpoints.receive(on: RunLoop.main)) { _ in
             accounts = providers()
+        }
+        .sheet(isPresented: $showingAddAccount) {
+            if let accountProfileManager {
+                AddAccountView(
+                    manager: accountProfileManager,
+                    preferences: preferences,
+                    disconnectedProviders: addableDisconnectedProviders,
+                    signInExisting: signIn,
+                    isExistingAuthenticated: { providerID in
+                        usageStore?.hasUsableAuthentication(providerID: providerID) == true
+                    },
+                    didConnectExisting: connect
+                ) {
+                    showingAddAccount = false
+                    refreshVisibleState()
+                }
+            }
         }
     }
 
@@ -735,8 +755,237 @@ struct SettingsView: View {
         }
     }
 
+    private func managedAccountProviders(_ manager: AccountProfileManager) -> [ManagedAccountProvider] {
+        ManagedAccountProvider.allCases.filter { provider in
+            switch provider {
+            case .codex: !manager.managedCodexProfiles.isEmpty
+            case .claude: !manager.managedClaudeProfiles.isEmpty
+            case .antigravity: !manager.managedAntigravityAccounts.isEmpty
+            case .cursor: !manager.managedCursorProfiles.isEmpty
+            case .grok, .kimi: !manager.managedCLIProfiles(provider).isEmpty
+            case .kiro: false
+            case .deepseek, .qianwenai, .minimax: !manager.managedWebAccounts(provider).isEmpty
+            case .ollama, .apify, .glm, .amp, .kilo, .opencode, .copilot: !manager.managedSecretAccounts(provider).isEmpty
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func managedAccountsTabs(_ manager: AccountProfileManager) -> some View {
+        let providers = managedAccountProviders(manager)
+        let selected = providers.contains(managedAccountTab) ? managedAccountTab : providers[0]
+
+        Section {
+            Picker(L10n.t("Account provider"), selection: Binding(
+                get: { selected },
+                set: { managedAccountTab = $0 }
+            )) {
+                ForEach(providers) { provider in
+                    Text(provider.title).tag(provider)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+        } header: {
+            Text(L10n.t("Manage Accounts"))
+        }
+
+        switch selected {
+        case .codex:
+            Section {
+                ForEach(manager.managedCodexProfiles, id: \.id) { profile in
+                    HStack(spacing: 12) {
+                        ProviderGlyphView(glyph: .openai, size: 22)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(preferences.nickname(for: profile.id) ?? profile.name)
+                                .font(.headline)
+                            Text(L10n.t("OpenAI account via Codex"))
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button(L10n.t("Re-authenticate")) { manager.reauthenticate(profile) }
+                        Button(L10n.t("Remove"), role: .destructive) {
+                            if (try? manager.removeCodex(profile)) != nil {
+                                forgetManagedAccount(profile.id)
+                            }
+                        }
+                    }
+                }
+            } footer: {
+                Text(L10n.t("Each OpenAI account refreshes independently through its isolated Codex login. Removing one deletes only Codenotch's managed Codex profile."))
+            }
+        case .claude:
+            Section {
+                ForEach(manager.managedClaudeProfiles, id: \.id) { profile in
+                    HStack(spacing: 12) {
+                        ProviderGlyphView(glyph: .claude, size: 22)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(preferences.nickname(for: profile.id) ?? profile.name)
+                                .font(.headline)
+                            Text(ClaudeProfile(slug: "managed-\(profile.slug)",
+                                               configDirectory: profile.directory).signedInAddress()
+                                 ?? L10n.t("Anthropic account via Claude"))
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button(L10n.t("Re-authenticate")) { manager.reauthenticate(profile) }
+                        Button(L10n.t("Remove"), role: .destructive) {
+                            if (try? manager.removeClaude(profile)) != nil {
+                                forgetManagedAccount(profile.id)
+                            }
+                        }
+                    }
+                }
+            } footer: {
+                Text(L10n.t("Each Claude account has its own isolated configuration and Keychain credential. Removing one does not sign out any other Claude account."))
+            }
+        case .antigravity:
+            Section {
+                ForEach(manager.managedAntigravityAccounts, id: \.id) { account in
+                    HStack(spacing: 12) {
+                        ProviderGlyphView(glyph: .antigravity, size: 22)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(preferences.nickname(for: "antigravity-managed-\(account.id.uuidString.lowercased())")
+                                 ?? account.name).font(.headline)
+                            Text(account.email ?? L10n.t("Antigravity account"))
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button(L10n.t("Re-authenticate")) { manager.reauthenticate(account) }
+                        Button(L10n.t("Remove"), role: .destructive) {
+                            let id = "antigravity-managed-\(account.id.uuidString.lowercased())"
+                            if (try? manager.remove(account)) != nil {
+                                forgetManagedAccount(id)
+                            }
+                        }
+                    }
+                }
+            } footer: {
+                Text(L10n.t("Each Antigravity account refreshes independently. Removing one deletes its OAuth credentials from Keychain and leaves Antigravity.app's signed-in account unchanged."))
+            }
+        case .cursor:
+            Section {
+                ForEach(manager.managedCursorProfiles, id: \.id) { profile in
+                    HStack(spacing: 12) {
+                        ProviderGlyphView(glyph: .cursor, size: 22)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(preferences.nickname(for: profile.id) ?? profile.name).font(.headline)
+                            Text(CursorCredentials.managedAccount(in: profile.directory)?.label
+                                 ?? L10n.t("Cursor account via Cursor Agent"))
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button(L10n.t("Re-authenticate")) { manager.reauthenticate(profile) }
+                        Button(L10n.t("Remove"), role: .destructive) {
+                            if (try? manager.removeCursor(profile)) != nil {
+                                forgetManagedAccount(profile.id)
+                            }
+                        }
+                    }
+                }
+            } footer: {
+                Text(L10n.t("Each Cursor account has its own private HOME, configuration, access token, and refresh token. Cursor.app's signed-in account is unchanged."))
+            }
+        case .grok, .kimi:
+            Section {
+                ForEach(manager.managedCLIProfiles(selected), id: \.id) { profile in
+                    HStack(spacing: 12) {
+                        ProviderGlyphView(glyph: selected == .grok ? .grok : .kimi, size: 22)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(preferences.nickname(for: profile.id) ?? profile.name).font(.headline)
+                            Text(L10n.t("Independent renewable OAuth session"))
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button(L10n.t("Re-authenticate")) { manager.reauthenticate(profile) }
+                        Button(L10n.t("Remove"), role: .destructive) {
+                            if (try? manager.removeCLIProfile(profile)) != nil {
+                                forgetManagedAccount(profile.id)
+                            }
+                        }
+                    }
+                }
+            } footer: {
+                Text(selected == .grok
+                     ? L10n.t("Each Grok account uses its own GROK_HOME and refresh token. The normal Grok CLI account is unchanged.")
+                     : L10n.t("Each Kimi account uses its own KIMI_CODE_HOME and refresh token. The normal Kimi CLI account is unchanged."))
+            }
+        case .kiro:
+            EmptyView()
+        case .deepseek, .qianwenai, .minimax:
+            Section {
+                ForEach(manager.managedWebAccounts(selected), id: \.id) { account in
+                    HStack(spacing: 12) {
+                        ProviderGlyphView(glyph: selected == .deepseek ? .deepseek
+                                          : selected == .qianwenai ? .qianwenAI : .minimax,
+                                          size: 22)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(preferences.nickname(for: account.providerID) ?? account.name)
+                                .font(.headline)
+                            Text(L10n.t("Independent browser session"))
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button(L10n.t("Re-authenticate")) {
+                            let profile = AccountProfileManager.CreatedProfile(
+                                provider: selected, id: account.providerID, name: account.name,
+                                slug: account.id.uuidString.lowercased(), directory: account.directory)
+                            manager.authenticate(profile)
+                        }
+                        Button(L10n.t("Remove"), role: .destructive) {
+                            if (try? manager.remove(account)) != nil {
+                                forgetManagedAccount(account.providerID)
+                            }
+                        }
+                    }
+                }
+            } footer: {
+                Text(L10n.t("Each account uses its own persistent browser data store. Cookies and local storage are never shared with another account."))
+            }
+        case .ollama, .apify, .glm, .amp, .kilo, .opencode, .copilot:
+            Section {
+                ForEach(manager.managedSecretAccounts(selected), id: \.id) { account in
+                    HStack(spacing: 12) {
+                        ProviderGlyphView(glyph: selected == .ollama ? .ollama
+                                          : selected == .apify ? .apify
+                                          : selected == .glm ? .glm
+                                          : selected == .amp ? .amp
+                                          : selected == .kilo ? .kilo
+                                          : selected == .opencode ? .opencode : .copilot, size: 22)
+                        Text(preferences.nickname(for: account.providerID) ?? account.name).font(.headline)
+                        Spacer()
+                        Button(L10n.t("Remove"), role: .destructive) {
+                            if (try? manager.remove(account)) != nil { forgetManagedAccount(account.providerID) }
+                        }
+                    }
+                }
+            } footer: {
+                Text(L10n.t("Each account has its own API key stored separately in Keychain."))
+            }
+        }
+    }
+
+    private func forgetManagedAccount(_ providerID: String) {
+        preferences.forgetAccount(providerID)
+        usageStore?.forgetAccountData(providerID: providerID)
+        refreshVisibleState()
+    }
+
     private var accountsPane: some View {
         Form {
+            Section {
+                Button {
+                    showingAddAccount = true
+                } label: {
+                    Label(L10n.t("Add Account"), systemImage: "plus.circle.fill")
+                }
+                .disabled(accountProfileManager == nil)
+            } footer: {
+                Text(L10n.t("Add Account lists only providers with an available authentication flow. Disconnected providers without a supported sign-in action are hidden."))
+            }
+            if let accountProfileManager, !managedAccountProviders(accountProfileManager).isEmpty {
+                managedAccountsTabs(accountProfileManager)
+            }
             // Split in two, because ordering only means anything for the
             // first group: a provider switched off has no ring in the notch,
             // so dragging it was arranging something that is not on screen.
@@ -1123,7 +1372,7 @@ struct SettingsView: View {
                 // the app in the Dock or nowhere, a switch here would do
                 // nothing anyone could see; the choice is kept for when the
                 // item comes back.
-                if preferences.appPresence == .menuBar {
+                if preferences.appPresence.wantsStatusItem {
                     menuBarLimitRows
                 }
 
@@ -1494,7 +1743,31 @@ struct SettingsView: View {
     }
 
     private var notConnected: [ProviderSummary] {
-        ringAccounts.filter { !preferences.isConnected($0.id) }
+        ringAccounts.filter {
+            !preferences.isConnected($0.id)
+                && preferences.wasExplicitlyAdded($0.id)
+                && $0.account != nil
+        }
+    }
+
+    /// Add Account offers every provider that still needs an account and for
+    /// which its selection can perform a real authentication action. Do not
+    /// confuse "not connected" with the visibility toggle: a provider such as
+    /// Grok can be enabled by default while still having no authenticated
+    /// account, and must still appear here.
+    ///
+    /// Codex, Claude and Antigravity are excluded from this ordinary-provider
+    /// list because the managed choices above create isolated accounts for
+    /// them. Showing their default-profile rows as well would offer two choices
+    /// with the same name but very different isolation guarantees.
+    private var addableDisconnectedProviders: [ProviderSummary] {
+        // Legacy providers borrow one global login from their owning app or
+        // CLI. Offering them here made “Add Account” toggle that singleton and
+        // implied a second account had been created. Every provider with a
+        // genuinely isolated flow is represented by ManagedAccountProvider;
+        // OAuth-only integrations remain hidden until their refreshable state
+        // can also be isolated.
+        []
     }
 
     /// Nothing to read from anywhere. On a first launch that is the normal
@@ -1736,6 +2009,456 @@ private struct SoundRow: View {
     }
 }
 
+private struct AddAccountView: View {
+    @ObservedObject var manager: AccountProfileManager
+    @ObservedObject var preferences: Preferences
+    let disconnectedProviders: [ProviderSummary]
+    let signInExisting: (String) -> Bool
+    let isExistingAuthenticated: (String) -> Bool
+    let didConnectExisting: (String) -> Void
+    let dismiss: () -> Void
+
+    @State private var provider: AccountProfileManager.Provider?
+    @State private var created: AccountProfileManager.CreatedProfile?
+    @State private var error: String?
+    @State private var connected = false
+    @State private var authenticationAttempt = 0
+    @State private var pendingExisting: ProviderSummary?
+    @State private var credential = ""
+    @State private var credentialRegion = "global"
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack {
+                Text(L10n.t("Add Account"))
+                    .font(.title2.bold())
+                Spacer()
+            }
+
+            if connected, let created {
+                Label(L10n.t("Account Connected"), systemImage: "checkmark.circle.fill")
+                    .font(.headline)
+                    .foregroundStyle(.green)
+                Text(preferences.nickname(for: created.id) ?? created.provider.title)
+                HStack { Spacer(); Button(L10n.t("Done"), action: dismiss).keyboardShortcut(.defaultAction) }
+            } else if let pendingExisting {
+                Text(L10n.t("Waiting for \(pendingExisting.name) authentication…"))
+                    .font(.headline)
+                ProgressView().controlSize(.small)
+                Text(L10n.t("Complete sign-in in the window that opened. This account will not be added unless authentication succeeds."))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let error { Text(error).foregroundStyle(.red) }
+                HStack {
+                    Button(L10n.t("Cancel"), action: dismiss)
+                    Spacer()
+                    Button(L10n.t("Try Again")) {
+                        error = nil
+                        authenticationAttempt += 1
+                        if !signInExisting(pendingExisting.id) {
+                            error = L10n.t("The authentication window could not be opened.")
+                        }
+                    }
+                }
+                .task(id: "\(pendingExisting.id)-\(authenticationAttempt)") {
+                    await waitForExistingAuthentication(pendingExisting)
+                }
+            } else if let created {
+                Text(L10n.t("Creating \(created.provider.title) account…"))
+                    .font(.headline)
+                LabeledContent(L10n.t("Profile"), value: abbreviated(created.directory.path))
+                ProgressView().controlSize(.small)
+                Text(waitingExplanation(for: created.provider))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let error { Text(error).foregroundStyle(.red) }
+                HStack {
+                    Button(L10n.t("Cancel")) {
+                        manager.cancel(created)
+                        dismiss()
+                    }
+                    Spacer()
+                    Button(L10n.t("Try Again")) {
+                        error = nil
+                        authenticationAttempt += 1
+                        manager.authenticate(created)
+                    }
+                }
+                .task(id: "\(created.id)-\(authenticationAttempt)") {
+                    await waitForAuthentication(created)
+                }
+            } else if let provider {
+                Text(provider.title).font(.headline)
+                if manager.requiresCredentialEntry(provider) {
+                    SecureField(L10n.t("API key"), text: $credential)
+                        .textFieldStyle(.roundedBorder)
+                    if provider == .glm {
+                        Picker(L10n.t("Console"), selection: $credentialRegion) {
+                            Text(L10n.t("Global (z.ai)")).tag("global")
+                            Text(L10n.t("China (bigmodel.cn)")).tag("china")
+                        }
+                        .pickerStyle(.segmented)
+                    }
+                    Text(L10n.t("The key is stored in macOS Keychain and belongs only to this account."))
+                        .font(.caption).foregroundStyle(.secondary)
+                    if let error { Text(error).foregroundStyle(.red) }
+                    HStack {
+                        Button(L10n.t("Back")) { self.provider = nil; error = nil; credential = "" }
+                        Spacer()
+                        Button(L10n.t("Add Account")) { createCredential(provider) }
+                            .disabled(credential.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            .keyboardShortcut(.defaultAction)
+                    }
+                } else if manager.supportsDirectLogin(provider) {
+                    Text(L10n.t("Sign In opens the provider's official login page in your browser. Codenotch runs its authentication helper privately in the background and keeps this account separate from your default profile."))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let error { Text(error).foregroundStyle(.red) }
+                    HStack {
+                        Button(L10n.t("Back")) { self.provider = nil; error = nil }
+                        Spacer()
+                        Button(L10n.t("Sign In")) { create(provider) }
+                            .keyboardShortcut(.defaultAction)
+                    }
+                } else {
+                    Label(unavailableTitle(for: provider),
+                          systemImage: provider.unsupportedExplanation.isEmpty
+                              ? "arrow.down.circle" : "exclamationmark.shield")
+                        .foregroundStyle(.orange)
+                    Text(manager.unavailableExplanation(for: provider))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(L10n.t("Codenotch will not open or switch the provider GUI or replace an existing credential."))
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    HStack {
+                        Button(L10n.t("Back")) { self.provider = nil; error = nil }
+                        Spacer()
+                        Button(L10n.t("Cancel"), action: dismiss)
+                    }
+                }
+            } else {
+                Text(L10n.t("Choose Provider")).font(.headline)
+                // These integrations have provider-specific isolated account
+                // flows. Keep them visible even when their local helper is not
+                // installed yet; selecting one explains exactly what is
+                // missing instead of silently removing a supported provider.
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 18) {
+                        providerGroup(L10n.t("Sign in with browser"),
+                                      systemImage: "person.crop.circle.badge.checkmark",
+                                      providers: loginProviders)
+                        providerGroup(L10n.t("API key"),
+                                      systemImage: "key",
+                                      providers: credentialProviders)
+                        if !unavailableProviders.isEmpty {
+                            providerGroup(L10n.t("Unavailable"),
+                                          systemImage: "exclamationmark.triangle",
+                                          providers: unavailableProviders)
+                        }
+                        if !disconnectedProviders.isEmpty {
+                            VStack(alignment: .leading, spacing: 9) {
+                                Label(L10n.t("Other sign-in"), systemImage: "person.badge.plus")
+                                    .font(.headline)
+                                    .foregroundStyle(.secondary)
+                                LazyVGrid(columns: providerColumns, alignment: .leading, spacing: 12) {
+                                    ForEach(disconnectedProviders) { choice in
+                                        existingProviderCard(choice)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+                .frame(maxHeight: 520)
+                HStack { Spacer(); Button(L10n.t("Cancel"), action: dismiss) }
+            }
+        }
+        .padding(22)
+        .frame(width: isChoosingProvider ? 660 : 430)
+        .background(SettingsPalette.window)
+        .environment(\.colorScheme, .dark)
+    }
+
+    private var isChoosingProvider: Bool {
+        !connected && created == nil && provider == nil && pendingExisting == nil
+    }
+
+    private var providerColumns: [GridItem] {
+        [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)]
+    }
+
+    private var loginProviders: [AccountProfileManager.Provider] {
+        AccountProfileManager.Provider.allCases.filter {
+            $0.unsupportedExplanation.isEmpty && !manager.requiresCredentialEntry($0)
+        }
+    }
+
+    private var credentialProviders: [AccountProfileManager.Provider] {
+        AccountProfileManager.Provider.allCases.filter(manager.requiresCredentialEntry)
+    }
+
+    private var unavailableProviders: [AccountProfileManager.Provider] {
+        AccountProfileManager.Provider.allCases.filter { !$0.unsupportedExplanation.isEmpty }
+    }
+
+    private func providerGroup(_ title: String, systemImage: String,
+                               providers: [AccountProfileManager.Provider]) -> some View {
+        VStack(alignment: .leading, spacing: 9) {
+            Label(title, systemImage: systemImage)
+                .font(.headline)
+                .foregroundStyle(.secondary)
+            LazyVGrid(columns: providerColumns, alignment: .leading, spacing: 12) {
+                ForEach(providers) { choice in
+                    managedProviderCard(choice)
+                }
+            }
+        }
+    }
+
+    private func managedProviderCard(_ choice: AccountProfileManager.Provider) -> some View {
+        Button {
+            if manager.requiresCredentialEntry(choice) {
+                provider = choice
+            } else if manager.supportsDirectLogin(choice) {
+                create(choice)
+            } else {
+                provider = choice
+            }
+        } label: {
+            providerCard(icon: {
+                Image(systemName: icon(for: choice))
+                    .font(.title3)
+                    .frame(width: 28)
+            }, title: choice.title, subtitle: authenticationSubtitle(for: choice))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func existingProviderCard(_ choice: ProviderSummary) -> some View {
+        Button {
+            beginExistingAuthentication(choice)
+        } label: {
+            providerCard(icon: {
+                ProviderGlyphView(glyph: choice.glyph,
+                                  customIconFilename: choice.customIconFilename,
+                                  size: 22)
+                    .frame(width: 28)
+            }, title: choice.name, subtitle: L10n.t("Connect this provider"))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func providerCard<Icon: View>(@ViewBuilder icon: () -> Icon,
+                                          title: String,
+                                          subtitle: String) -> some View {
+        HStack(spacing: 12) {
+            icon()
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.headline)
+                    .lineLimit(1)
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+            Spacer(minLength: 4)
+            Image(systemName: "chevron.right")
+                .foregroundStyle(.tertiary)
+        }
+        .padding(.horizontal, 12)
+        .frame(maxWidth: .infinity, minHeight: 74, alignment: .leading)
+        .contentShape(Rectangle())
+        .background(SettingsPalette.selected, in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private func create(_ provider: AccountProfileManager.Provider) {
+        do {
+            let profile = try manager.create(provider: provider)
+            created = profile
+            error = nil
+            authenticationAttempt += 1
+            manager.authenticate(profile)
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func createCredential(_ provider: AccountProfileManager.Provider) {
+        do {
+            let metadata = provider == .glm ? ["region": credentialRegion] : [:]
+            let profile = try manager.create(provider: provider, credential: credential,
+                                             metadata: metadata)
+            applyAuthenticatedIdentity(to: profile)
+            preferences.setConnected(true, for: profile.id)
+            manager.reload()
+            created = profile
+            connected = true
+            self.credential = ""
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func beginExistingAuthentication(_ choice: ProviderSummary) {
+        error = nil
+        if isExistingAuthenticated(choice.id) {
+            finishExistingAuthentication(choice)
+            return
+        }
+        pendingExisting = choice
+        authenticationAttempt += 1
+        if !signInExisting(choice.id) {
+            error = L10n.t("The authentication window could not be opened.")
+        }
+    }
+
+    @MainActor
+    private func waitForExistingAuthentication(_ choice: ProviderSummary) async {
+        for _ in 0..<600 {
+            guard !Task.isCancelled else { return }
+            if isExistingAuthenticated(choice.id) {
+                finishExistingAuthentication(choice)
+                return
+            }
+            try? await Task.sleep(for: .seconds(1))
+        }
+        error = L10n.t("Authentication was not detected. The provider was not added.")
+    }
+
+    private func finishExistingAuthentication(_ choice: ProviderSummary) {
+        preferences.setConnected(true, for: choice.id)
+        didConnectExisting(choice.id)
+        dismiss()
+    }
+
+    @MainActor
+    private func waitForAuthentication(_ profile: AccountProfileManager.CreatedProfile) async {
+        for _ in 0..<600 {
+            guard !Task.isCancelled else { return }
+            switch manager.states[profile.id] {
+            case .success:
+                // Creating an account is an explicit request to display it.
+                // Discovery alone only makes a provider available in Settings;
+                // it does not put that provider in the Connected list or draw
+                // its ring. Connect it before reloading providers so the first
+                // refresh starts immediately.
+                applyAuthenticatedIdentity(to: profile)
+                preferences.setConnected(true, for: profile.id)
+                manager.reload()
+                connected = true
+                return
+            case .failed(let message):
+                error = message
+                return
+            default:
+                // Credential presence is also checked for command-line
+                // authenticators whose completion can precede their process
+                // termination callback.
+                if manager.isAuthenticated(profile) {
+                    do {
+                        try manager.validateUniqueIdentity(profile)
+                    } catch {
+                        self.error = error.localizedDescription
+                        return
+                    }
+                    applyAuthenticatedIdentity(to: profile)
+                    preferences.setConnected(true, for: profile.id)
+                    manager.reload()
+                    connected = true
+                    return
+                }
+            }
+            try? await Task.sleep(for: .seconds(1))
+        }
+        error = L10n.t("Authentication was not detected. You can try again without affecting existing accounts.")
+    }
+
+    private func applyAuthenticatedIdentity(to profile: AccountProfileManager.CreatedProfile) {
+        let otherNames = preferences.accountNicknames
+            .filter { $0.key != profile.id }
+            .map(\.value)
+        let displayName = manager.suggestedDisplayName(for: profile, existingNames: otherNames)
+        preferences.setNickname(displayName, for: profile.id)
+    }
+
+    private func profilePreview(provider: AccountProfileManager.Provider, slug: String) -> String {
+        switch provider {
+        case .codex: "~/.codex-\(slug)"
+        case .claude: "~/.claude-\(slug)"
+        case .antigravity: "~/.gemini/antigravity-\(slug)"
+        case .cursor: "~/Library/Application Support/Codenotch/Accounts/cursor/\(slug)"
+        case .grok: "~/Library/Application Support/Codenotch/Accounts/grok/\(slug)"
+        case .kimi: "~/Library/Application Support/Codenotch/Accounts/kimi/\(slug)"
+        case .kiro: ""
+        case .deepseek, .qianwenai, .minimax: "~/Library/Application Support/Codenotch/Accounts/web/\(provider.rawValue)/\(slug)"
+        case .ollama, .apify, .glm, .amp, .kilo, .opencode, .copilot: "macOS Keychain"
+        }
+    }
+
+    private func waitingExplanation(for provider: AccountProfileManager.Provider) -> String {
+        switch provider {
+        case .codex: L10n.t("Your browser has been opened by the Codex authentication helper. Complete the OpenAI login there; no Terminal or Codex window is opened.")
+        case .claude: L10n.t("Waiting for Anthropic authentication.")
+        case .antigravity: L10n.t("Waiting for Google authentication.")
+        case .cursor: L10n.t("Waiting for Cursor authentication.")
+        case .grok: L10n.t("Waiting for Grok authentication.")
+        case .kimi: L10n.t("Waiting for Kimi authentication.")
+        case .kiro: L10n.t("Multi-account setup coming soon.")
+        case .deepseek, .qianwenai, .minimax: L10n.t("Complete authentication in Codenotch's isolated browser window.")
+        case .ollama, .apify, .glm, .amp, .kilo, .opencode, .copilot: L10n.t("Saving this account securely in Keychain.")
+        }
+    }
+
+    private func unavailableTitle(for provider: AccountProfileManager.Provider) -> String {
+        if !provider.unsupportedExplanation.isEmpty {
+            return L10n.t("Isolated authentication is not currently supported by this integration.")
+        }
+        return L10n.t("The provider's authentication client is required.")
+    }
+
+    private func authenticationSubtitle(for provider: AccountProfileManager.Provider) -> String {
+        if !provider.unsupportedExplanation.isEmpty {
+            return provider.subtitle
+        }
+        if manager.requiresCredentialEntry(provider) {
+            return L10n.t("Enter API key")
+        }
+        return L10n.t("Sign in with browser")
+    }
+
+    private func abbreviated(_ path: String) -> String {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        return path.hasPrefix(home + "/") ? "~" + path.dropFirst(home.count) : path
+    }
+
+    private func icon(for provider: AccountProfileManager.Provider) -> String {
+        switch provider {
+        case .codex: "terminal"
+        case .claude: "sparkles"
+        case .antigravity: "a.circle"
+        case .cursor: "cursorarrow.rays"
+        case .grok: "g.circle"
+        case .kimi: "k.circle"
+        case .kiro: "ghost"
+        case .deepseek: "d.circle"
+        case .qianwenai: "q.circle"
+        case .minimax: "m.circle"
+        case .ollama: "cloud"
+        case .apify: "a.square"
+        case .glm: "g.circle"
+        case .amp: "bolt.circle"
+        case .kilo: "k.circle"
+        case .opencode: "square"
+        case .copilot: "person.crop.square"
+        }
+    }
+}
+
 private struct AccountRow: View {
     let provider: ProviderSummary
     @ObservedObject var preferences: Preferences
@@ -1772,6 +2495,11 @@ private struct AccountRow: View {
 
     private var isConnected: Bool { preferences.isConnected(provider.id) }
     private var isMuted: Bool { preferences.isMutedAlerts(for: provider.id) }
+    private var isProfileAccount: Bool {
+        ClaudeProfile.isClaude(providerID: provider.id)
+            || CodexProfile.isCodex(providerID: provider.id)
+            || AntigravityProfile.isAntigravity(providerID: provider.id)
+    }
 
     /// The name the owner gave the account, where there is one; the row, the
     /// notch and the notifications all use the same word.
@@ -1929,6 +2657,19 @@ private struct AccountRow: View {
                     Button(destination.title) { open(destination) }
                         .controlSize(.small)
                         .help(destination.help)
+                }
+
+                // Codex accounts are useful in both places: the desktop app
+                // owns the local coding session, while ChatGPT provides the
+                // account's web experience. Keep both destinations visible
+                // instead of making the installed app replace the web link.
+                if isConnected, CodexProfile.isCodex(providerID: provider.id),
+                   let chatGPTURL = URL(string: "https://chatgpt.com/") {
+                    Button(L10n.t("Open ChatGPT")) {
+                        NSWorkspace.shared.open(chatGPTURL)
+                    }
+                    .controlSize(.small)
+                    .help(L10n.t("Opens ChatGPT in your browser."))
                 }
 
                 Toggle(provider.name, isOn: binding)
@@ -2278,7 +3019,7 @@ private struct AccountRow: View {
                     Text(account.summary)
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)
-                    if canOpenSignIn {
+                    if canOpenSignIn, !isProfileAccount {
                         Button(L10n.t("Switch…")) { _ = switchAccount(provider.id) }
                             .buttonStyle(SettingsLinkButtonStyle())
                             .help(provider.signIn.switchHint)

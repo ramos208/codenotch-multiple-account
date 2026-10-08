@@ -7,7 +7,7 @@ import AppKit
 /// leave a gap: a Dock tile is easy to find and permanent, a menu bar item is
 /// out of the way but still there, and some people want neither.
 enum AppPresence: String, CaseIterable, Identifiable {
-    /// A normal app: Dock tile, ⌘-Tab entry, menu bar of its own.
+    /// A normal app with both a Dock tile and a persistent menu bar shortcut.
     case dock
     /// An icon in the menu bar, and nothing in the Dock.
     case menuBar
@@ -18,7 +18,7 @@ enum AppPresence: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .dock:    return L10n.t("Dock")
+        case .dock:    return L10n.t("Dock + Menu bar")
         case .menuBar: return L10n.t("Menu bar")
         case .hidden:  return L10n.t("Neither")
         }
@@ -27,7 +27,7 @@ enum AppPresence: String, CaseIterable, Identifiable {
     var explanation: String {
         switch self {
         case .dock:
-            return L10n.t("A normal app icon in the Dock while Codenotch is running.")
+            return L10n.t("Icons in both the Dock and menu bar. Closing the window leaves Codenotch and the notch running; use the menu bar icon to reopen it.")
         case .menuBar:
             return L10n.t("A small icon in the menu bar instead, and nothing in the Dock.")
         case .hidden:
@@ -43,5 +43,8 @@ enum AppPresence: String, CaseIterable, Identifiable {
         self == .dock ? .regular : .accessory
     }
 
-    var wantsStatusItem: Bool { self == .menuBar }
+    /// The Dock mode also keeps a menu bar shortcut. A window can be closed
+    /// while the notch continues running, and this leaves an obvious way to
+    /// reopen Settings without relying on the Dock window still being visible.
+    var wantsStatusItem: Bool { self != .hidden }
 }

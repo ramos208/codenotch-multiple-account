@@ -154,4 +154,17 @@ enum KeychainItem {
         ]
         return SecItemDelete(query as CFDictionary) == errSecSuccess
     }
+
+    /// Deletes every generic-password item filed under a service. Managed
+    /// Claude profiles use a directory-specific service name, so this removes
+    /// only that profile's credentials and cannot sign out another profile.
+    @discardableResult
+    static func deleteAll(service: String) -> Bool {
+        let query: [CFString: Any] = [
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: service,
+        ]
+        let status = SecItemDelete(query as CFDictionary)
+        return status == errSecSuccess || status == errSecItemNotFound
+    }
 }

@@ -22,8 +22,8 @@ import os
 /// those would prefix a `~` on a key reading and present a browser session
 /// as a published API.
 actor MiniMaxProvider: UsageProvider {
-    nonisolated let id = "minimax"
-    nonisolated let displayName = "MiniMax"
+    nonisolated let id: String
+    nonisolated let displayName: String
     nonisolated let glyph = ProviderGlyph.minimax
 
     /// Re-read on every fetch so a region change in Settings applies without
@@ -33,6 +33,7 @@ actor MiniMaxProvider: UsageProvider {
     private let archive: UsageArchive
     private let loadAPIKey: @Sendable () -> String?
     private let loadCookieHeader: @Sendable () -> String?
+    nonisolated private let loadAccount: @Sendable () -> ProviderAccount?
 
     /// Optional browser session, for a later composed sign-in sheet.
     /// `nonisolated(unsafe)` because `presentSignIn` is called off the actor
@@ -48,12 +49,18 @@ actor MiniMaxProvider: UsageProvider {
     /// worst a race can do is show the previous plan for one row-draw.
     nonisolated(unsafe) private var lastKnownPlan: String?
 
-    init(session: URLSession = .shared,
+    init(id: String = "minimax", displayName: String = "MiniMax",
+         session: URLSession = .shared,
          region: MiniMaxRegion? = nil,
          archive: UsageArchive = UsageArchive(),
          web: WebSessionProvider? = nil,
          loadAPIKey: @escaping @Sendable () -> String? = { MiniMaxCredentials.loadAPIKey() },
-         loadCookieHeader: @escaping @Sendable () -> String? = { MiniMaxCredentials.loadCookieHeader() }) {
+         loadCookieHeader: @escaping @Sendable () -> String? = { MiniMaxCredentials.loadCookieHeader() },
+         loadAccount: @escaping @Sendable () -> ProviderAccount? = {
+             MiniMaxCredentials.account(region: Preferences.storedMinimaxRegion())
+         }) {
+        self.id = id
+        self.displayName = displayName
         self.session = session
         if let region {
             self.resolveRegion = { region }
@@ -65,6 +72,7 @@ actor MiniMaxProvider: UsageProvider {
         self.presentsWebSignIn = web != nil
         self.loadAPIKey = loadAPIKey
         self.loadCookieHeader = loadCookieHeader
+        self.loadAccount = loadAccount
         self.retryNoEarlierThan = archive.loadBackoffUntil(providerID: id)
     }
 
@@ -76,7 +84,8 @@ actor MiniMaxProvider: UsageProvider {
     }
 
     nonisolated func account() -> ProviderAccount? {
-        guard let base = MiniMaxCredentials.account(region: resolveRegion()) else { return nil }
+        guard let base = loadAccount() ?? web?.account()
+        else { return nil }
         return ProviderAccount(
             label: base.label,
             plan: lastKnownPlan ?? base.plan,
@@ -100,8 +109,10 @@ actor MiniMaxProvider: UsageProvider {
     }
 
     func signOut() async {
-        MiniMaxCredentials.deleteAPIKey()
-        MiniMaxCredentials.deleteCookieHeader()
+        if id == "minimax" {
+            MiniMaxCredentials.deleteAPIKey()
+            MiniMaxCredentials.deleteCookieHeader()
+        }
         if let web {
             await web.signOut()
         }

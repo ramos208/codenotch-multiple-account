@@ -15,8 +15,8 @@ import os
 /// Credits (`?format=credits`) is the weekly Grok Build allowance, and the only
 /// number this endpoint actually states.
 actor GrokLocalProvider: UsageProvider {
-    nonisolated let id = "grok"
-    nonisolated let displayName = "Grok"
+    nonisolated let id: String
+    nonisolated let displayName: String
     nonisolated let glyph = ProviderGlyph.grok
 
     private let creditsURL = URL(string: "https://cli-chat-proxy.grok.com/v1/billing?format=credits")!
@@ -28,7 +28,10 @@ actor GrokLocalProvider: UsageProvider {
     /// the old one must not outlive that.
     private var renewed: (accessToken: String, expiresAt: Date, from: String)?
 
-    init(session: URLSession = .shared, authURL: URL = GrokCredentials.authURL) {
+    init(id: String = "grok", displayName: String = "Grok",
+         session: URLSession = .shared, authURL: URL = GrokCredentials.authURL) {
+        self.id = id
+        self.displayName = displayName
         self.session = session
         self.authURL = authURL
     }

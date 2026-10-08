@@ -147,6 +147,9 @@ final class WebSessionProvider: NSObject, UsageProvider {
     nonisolated let id: String
     nonisolated let displayName: String
     nonisolated let glyph: ProviderGlyph
+    /// A managed browser account gets a stable UUID-backed WebKit store.
+    /// `nil` preserves the original provider and its legacy default store.
+    nonisolated let accountID: UUID?
     /// A browser-session provider is the one kind that really can sign you in:
     /// the session lives in its own WebView, so it can open one and clear one.
     nonisolated var signInRoute: SignInRoute { .modal(name: displayName) }
@@ -165,6 +168,10 @@ final class WebSessionProvider: NSObject, UsageProvider {
         )
     }
 
+    nonisolated var authenticationFingerprint: String? {
+        UserDefaults.standard.string(forKey: "\(id).authFingerprint")
+    }
+
     /// `nonisolated(unsafe)` so `account()` can still read the origin the way
     /// DeepSeek does. Mutation stays on the main actor via `apply(site:)`.
     nonisolated(unsafe) private var site: Site
@@ -180,10 +187,11 @@ final class WebSessionProvider: NSObject, UsageProvider {
 
     var onAuthenticated: (() -> Void)?
 
-    init(site: Site) {
+    init(site: Site, accountID: UUID? = nil, displayName: String? = nil) {
         self.site = site
-        self.id = site.id
-        self.displayName = site.displayName
+        self.accountID = accountID
+        self.id = accountID.map { "\(site.id)-managed-\($0.uuidString.lowercased())" } ?? site.id
+        self.displayName = displayName ?? site.displayName
         self.glyph = site.glyph
         super.init()
     }
@@ -258,7 +266,11 @@ final class WebSessionProvider: NSObject, UsageProvider {
     private func makeWebViewIfNeeded() -> WKWebView {
         if let webView { return webView }
         let configuration = WKWebViewConfiguration()
-        configuration.websiteDataStore = .default()   // persists across launches
+        // Managed accounts must never share cookies or local storage. WebKit's
+        // UUID-backed persistent stores survive relaunches while remaining
+        // isolated from both Safari and every other Codenotch account.
+        configuration.websiteDataStore = accountID.map(WKWebsiteDataStore.init(forIdentifier:))
+            ?? .default()
         // Records the API calls the page makes, so an endpoint can be found by
         // watching the site rather than by guessing at path names. Injected at
         // document start, because the interesting calls happen during load.
@@ -597,6 +609,9 @@ final class WebSessionProvider: NSObject, UsageProvider {
 
     private func authenticationDidComplete() {
         hasSignedIn = true
+        if let lastAuthFingerprint {
+            UserDefaults.standard.set(lastAuthFingerprint, forKey: "\(id).authFingerprint")
+        }
         switchGate = nil
         signInProbeTask?.cancel()
         signInProbeTask = nil

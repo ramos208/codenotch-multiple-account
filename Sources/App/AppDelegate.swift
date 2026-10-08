@@ -15,6 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var lmstudioMetrics: LMStudioMetrics?
     private var preferences: Preferences?
     private var settings: SettingsWindowController?
+    private var accountProfileManager: AccountProfileManager?
     private var whatsNew: WhatsNewWindowController?
     /// Held for the life of the app: releasing it stops the scheduled checks.
     private var updater: Updater?
@@ -82,9 +83,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// any `~/.claude-<slug>` — found once at launch. Each gets a usage
     /// provider and a session monitor of its own, keyed by the same id, so a
     /// work login's sessions spin the work ring and nobody else's.
-    private let claudeProfiles = ClaudeProfile.discover()
-    private let codexProfiles = CodexProfile.discover()
-    private let antigravityProfiles = AntigravityProfile.discover()
+    private var claudeProfiles = ClaudeProfile.discover() + ClaudeProfile.discoverManaged()
+    private var codexProfiles = CodexProfile.discover() + CodexProfile.discoverManaged()
+    private var antigravityProfiles = AntigravityProfile.discover() + AntigravityProfile.discoverManaged()
     /// Held as concrete providers, not just handed to the store: the token
     /// refresher needs to ask one of them how long its token has left, and the
     /// protocol has no business carrying that.
@@ -168,24 +169,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let customProviders: [UsageProvider] = preferences.customEndpoints.filter(\.isEnabled).map { endpoint in
                 CustomEndpointProvider(endpoint: endpoint)
             }
-            let allProviders: [UsageProvider] = claudeProviders
-                + [CursorLocalProvider()]
-                + codexProfiles.map { CodexLocalProvider(profile: $0) }
-                + antigravityProfiles.map { AntigravityProvider(profile: $0) }
-                + [GLMProvider(), MiniMaxProvider(web: miniMaxWeb), GrokLocalProvider(), DevinLocalProvider(), OpenCodeProvider(),
-                   CommandCodeProvider(), GitHubCopilotProvider(), KimiProvider(), KiroProvider(), AmpProvider(),
-                   ApifyProvider(), KiloProvider(),
-                   OllamaLocalProvider(endpoint: URL(string: preferences.ollamaEndpoint)!),
-                   LMStudioLocalProvider(endpoint: URL(string: preferences.lmstudioEndpoint)!),
-                   OllamaProvider(),
-                   // A closure, not the value: the provider is an actor and
-                   // re-reads the budget on every fetch, so a ceiling typed
-                   // into Settings applies without a restart.
-                   GeminiAPIProvider(budget: {
-                       Preferences.storedGeminiAPIMonthlyTokenBudget()
-                   })]
-                + webProviders
-                + customProviders
+            // Built in small, typed steps so newer Swift compilers do not have
+            // to solve one very large heterogeneous `+` expression.
+            var allProviders: [UsageProvider] = claudeProviders
+            allProviders.append(CursorLocalProvider())
+            allProviders.append(contentsOf: codexProfiles.map { CodexLocalProvider(profile: $0) })
+            allProviders.append(contentsOf: antigravityProfiles.map { AntigravityProvider(profile: $0) })
+            allProviders.append(contentsOf: managedCursorProviders())
+            allProviders.append(contentsOf: managedIsolatedCLIProviders())
+            allProviders.append(contentsOf: managedWebProviders())
+            allProviders.append(contentsOf: managedSecretProviders())
+            let builtInProviders: [UsageProvider] = [
+                GLMProvider(), MiniMaxProvider(web: miniMaxWeb), GrokLocalProvider(),
+                DevinLocalProvider(), OpenCodeProvider(), CommandCodeProvider(),
+                GitHubCopilotProvider(), KimiProvider(), KiroProvider(), AmpProvider(),
+                ApifyProvider(), KiloProvider(),
+                OllamaLocalProvider(endpoint: URL(string: preferences.ollamaEndpoint)!),
+                LMStudioLocalProvider(endpoint: URL(string: preferences.lmstudioEndpoint)!),
+                OllamaProvider(),
+                // A closure, not the value: the provider is an actor and
+                // re-reads the budget on every fetch, so a ceiling typed into
+                // Settings applies without a restart.
+                GeminiAPIProvider(budget: {
+                    Preferences.storedGeminiAPIMonthlyTokenBudget()
+                }),
+            ]
+            allProviders.append(contentsOf: builtInProviders)
+            allProviders.append(contentsOf: webProviders)
+            allProviders.append(contentsOf: customProviders)
             preferences.reconcile(discoveredIDs: allProviders.map(\.id))
             let store = UsageStore(
                 providers: allProviders,
@@ -196,6 +207,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 // order for a frame and then visibly shuffles.
                 order: preferences.providerOrder
             )
+            let profileManager = AccountProfileManager { [weak self, weak store, weak preferences] in
+                guard let self, let store else { return }
+                self.reloadAccountProfiles(in: store, preferences: preferences)
+            }
+            self.accountProfileManager = profileManager
             preferences.$customEndpoints
                 .map { endpoints in
                     endpoints.filter(\.isEnabled).map {
@@ -412,6 +428,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     self?.sendTestNotification()
                 },
                 usageStore: store, ollamaRelay: relay, lmstudioMetrics: lmstudio,
+                accountProfileManager: profileManager,
                 phoneLinkPairing: phonePairing, phoneLinkRegistry: phoneRegistry, phoneLinkServerStatus: serverStatus
             )
             // The gear toggles; everything else that opens settings opens it.
@@ -1013,6 +1030,142 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         fleet.apply(deepSeekPricingEnabled: preferences.deepSeekPricingEnabled)
         fleet.apply(deepSeekPricingSchedule: preferences.deepSeekPricingSchedule)
         fleet.show()
+    }
+
+    /// Re-discover profile-backed providers without rebuilding the app. Called
+    /// after Add Account creates a directory and again when login completes.
+    @MainActor
+    private func reloadAccountProfiles(in store: UsageStore, preferences: Preferences?) {
+        claudeProfiles = ClaudeProfile.discover() + ClaudeProfile.discoverManaged()
+        codexProfiles = CodexProfile.discover() + CodexProfile.discoverManaged()
+        antigravityProfiles = AntigravityProfile.discover() + AntigravityProfile.discoverManaged()
+
+        let claudeNames = ClaudeProfile.displayNames(for: claudeProfiles)
+        let claude = claudeProfiles.map {
+            ClaudeOAuthProvider(profile: $0, displayName: claudeNames[$0.id])
+        }
+        claudeProviders = claude
+        var providers: [UsageProvider] = claude
+        providers.append(contentsOf: codexProfiles.map { CodexLocalProvider(profile: $0) })
+        providers.append(contentsOf: antigravityProfiles.map { AntigravityProvider(profile: $0) })
+        providers.append(contentsOf: managedCursorProviders())
+        providers.append(contentsOf: managedIsolatedCLIProviders())
+        providers.append(contentsOf: managedWebProviders())
+        providers.append(contentsOf: managedSecretProviders())
+        preferences?.reconcile(discoveredIDs: store.knownIDs + providers.map(\.id))
+        store.registerProfileProviders(providers)
+    }
+
+    @MainActor
+    private func managedWebProviders() -> [UsageProvider] {
+        ManagedWebAccountStore().accounts().compactMap { account in
+            let site: WebSessionProvider.Site
+            switch account.provider {
+            case ManagedAccountProvider.deepseek.rawValue: site = Sites.deepSeek
+            case ManagedAccountProvider.qianwenai.rawValue: site = Sites.qianwen
+            case ManagedAccountProvider.minimax.rawValue:
+                let web = WebSessionProvider(site: Sites.minimax(region: Preferences.storedMinimaxRegion()),
+                                              accountID: account.id, displayName: account.name)
+                return MiniMaxProvider(id: account.providerID, displayName: account.name,
+                    web: web, loadAPIKey: { nil }, loadCookieHeader: { nil }, loadAccount: { nil })
+            default: return nil
+            }
+            return WebSessionProvider(site: site, accountID: account.id, displayName: account.name)
+        }
+    }
+
+    @MainActor
+    private func managedCursorProviders() -> [UsageProvider] {
+        guard let manager = accountProfileManager else { return [] }
+        return manager.managedCursorProfiles.map {
+            CursorLocalProvider(id: $0.id, displayName: $0.name, managedDirectory: $0.directory)
+        }
+    }
+
+    @MainActor
+    private func managedIsolatedCLIProviders() -> [UsageProvider] {
+        guard let manager = accountProfileManager else { return [] }
+        let grok: [UsageProvider] = manager.managedCLIProfiles(.grok).map {
+            GrokLocalProvider(id: $0.id, displayName: $0.name,
+                authURL: $0.directory.appendingPathComponent("auth.json"))
+        }
+        let kimi: [UsageProvider] = manager.managedCLIProfiles(.kimi).map {
+            KimiProvider(id: $0.id, displayName: $0.name,
+                authURL: $0.directory.appendingPathComponent("credentials/kimi-code.json"))
+        }
+        return grok + kimi
+    }
+
+    @MainActor
+    private func managedSecretProviders() -> [UsageProvider] {
+        let store = ManagedSecretAccountStore()
+        return store.accounts().compactMap { account in
+            switch account.provider {
+            case ManagedAccountProvider.ollama.rawValue:
+                return OllamaProvider(id: account.providerID, displayName: account.name,
+                    loadKey: { store.credential(account) }, keyIsPresent: {
+                        KeychainItem.modifiedAt(service: ManagedSecretAccountStore.keychainService,
+                                                account: account.providerID) != nil
+                    }, deleteKey: { })
+            case ManagedAccountProvider.apify.rawValue:
+                var sources = ApifyCredentialSources()
+                sources.environment = [:]
+                sources.settingsToken = { store.credential(account) }
+                sources.settingsPresent = {
+                    KeychainItem.modifiedAt(service: ManagedSecretAccountStore.keychainService,
+                                            account: account.providerID) != nil
+                }
+                sources.deleteSettingsToken = {}
+                sources.authURL = account.directory.appendingPathComponent("no-cli-auth.json")
+                sources.cliKeychain = { throw UsageProviderError.needsAuth }
+                sources.cliKeychainPresent = { false }
+                sources.forgetCached = {}
+                return ApifyProvider(id: account.providerID, displayName: account.name, sources: sources)
+            case ManagedAccountProvider.glm.rawValue:
+                return GLMProvider(id: account.providerID, displayName: account.name,
+                    loadCredentials: {
+                        guard let token = store.credential(account) else { return nil }
+                        let base = account.metadata["region"] == "china"
+                            ? URL(string: "https://open.bigmodel.cn")!
+                            : URL(string: "https://api.z.ai")!
+                        return GLMCredentials.Credential(token: token, baseURL: base,
+                                                         source: "Codenotch")
+                    }, detectsStartPlan: { false })
+            case ManagedAccountProvider.amp.rawValue:
+                return AmpProvider(id: account.providerID, displayName: account.name,
+                    loadToken: {
+                        guard let token = store.credential(account) else { throw UsageProviderError.needsAuth }
+                        return token
+                    })
+            case ManagedAccountProvider.kilo.rawValue:
+                return KiloProvider(id: account.providerID, displayName: account.name,
+                    loadCredentials: {
+                        store.credential(account).map {
+                            KiloCredentials.Credential(token: $0, organizationID: nil)
+                        }
+                    })
+            case ManagedAccountProvider.opencode.rawValue:
+                return OpenCodeProvider(id: account.providerID, displayName: account.name,
+                    loadCredential: {
+                        store.credential(account).map {
+                            OpenCodeCredentials.Credential(token: $0, oauth: false,
+                                console: nil, org: nil, expires: nil, source: "Codenotch")
+                        }
+                    })
+            case ManagedAccountProvider.copilot.rawValue:
+                return GitHubCopilotProvider(id: account.providerID, displayName: account.name,
+                    loadCredentials: {
+                        guard let token = store.credential(account) else { throw UsageProviderError.needsAuth }
+                        return GitHubCopilotCredentials(token: token, username: nil, source: "Codenotch")
+                    }, loadAccount: {
+                        guard store.credential(account) != nil else { return nil }
+                        return ProviderAccount(label: nil, plan: nil, source: "Codenotch",
+                            manageURL: URL(string: "https://github.com/settings/copilot"))
+                    })
+            default:
+                return nil
+            }
+        }
     }
 
     /// Open the notch, and make a noise, when something has just finished.

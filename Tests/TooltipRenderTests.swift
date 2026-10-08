@@ -9,6 +9,47 @@ import SwiftUI
 /// `TOOLTIP_RENDER_PATH` and the frame is written there.
 @MainActor
 final class TooltipRenderTests: XCTestCase {
+    func testManagedAccountTitleUsesProviderShortcut() {
+        let snapshot = ProviderSnapshot(
+            id: "codex-managed-example", displayName: "Eoramos Codex", glyph: .openai,
+            fidelity: .official, status: .ok, windows: []
+        )
+        XCTAssertEqual(snapshot.compactUsageTitle, "Eoramos CX Usage")
+
+        let antigravity = ProviderSnapshot(
+            id: "antigravity-managed-example", displayName: "Ramoslucille Antigravity",
+            glyph: .antigravity, fidelity: .official, status: .ok, windows: []
+        )
+        XCTAssertEqual(antigravity.compactUsageTitle, "Ramoslucille AG Usage")
+    }
+
+    func testMonthlySubscriptionEndAppearsInSubtitle() throws {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let reset = now.addingTimeInterval(30 * 24 * 60 * 60)
+        let snapshot = ProviderSnapshot(
+            id: "codex", displayName: "Codex", glyph: .openai, fidelity: .official,
+            status: .ok,
+            windows: [LimitWindow(id: "monthly", label: "Monthly limit", usedFraction: 0.2,
+                                  resetsAt: reset, duration: 30 * 24 * 60 * 60)],
+            plan: "Plus"
+        )
+        let subtitle = try XCTUnwrap(snapshot.subscriptionSubtitle(now: now))
+        XCTAssertTrue(subtitle.hasPrefix("Plus · Monthly ends "))
+    }
+
+    func testWeeklyResetIsNotCalledSubscriptionEnd() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let snapshot = ProviderSnapshot(
+            id: "codex", displayName: "Codex", glyph: .openai, fidelity: .official,
+            status: .ok,
+            windows: [LimitWindow(id: "weekly", label: "Weekly limit", usedFraction: 0.2,
+                                  resetsAt: now.addingTimeInterval(7 * 24 * 60 * 60),
+                                  duration: 7 * 24 * 60 * 60)],
+            plan: "Plus"
+        )
+        XCTAssertEqual(snapshot.subscriptionSubtitle(now: now), "Plus")
+    }
+
     func testAmpDetailsRenderBesideTheHoveredRing() throws {
         let reading = try AmpUsage.parse(AmpFixture.tier)
         let model = NotchViewModel()

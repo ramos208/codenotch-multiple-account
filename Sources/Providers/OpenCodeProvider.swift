@@ -21,12 +21,13 @@ import os
 /// pay-as-you-go credit balance has no API at all, so this covers the Go
 /// windows only.
 actor OpenCodeProvider: UsageProvider {
-    nonisolated let id = "opencode"
-    nonisolated let displayName = "OpenCode"
+    nonisolated let id: String
+    nonisolated let displayName: String
     nonisolated let glyph = ProviderGlyph.opencode
 
     private let session: URLSession
     private let archive: UsageArchive
+    nonisolated private let loadCredential: @Sendable () -> OpenCodeCredentials.Credential?
     /// Set when the endpoint returns 429. Until it passes, refreshes are
     /// skipped without touching the network — the same bargain Claude's and
     /// GLM's make.
@@ -34,8 +35,22 @@ actor OpenCodeProvider: UsageProvider {
     private var consecutiveRateLimits = 0
 
     init(session: URLSession = .shared, archive: UsageArchive = UsageArchive()) {
+        self.id = "opencode"
+        self.displayName = "OpenCode"
         self.session = session
         self.archive = archive
+        self.loadCredential = { OpenCodeCredentials.load() }
+        self.retryNoEarlierThan = archive.loadBackoffUntil(providerID: id)
+    }
+
+    init(id: String, displayName: String, session: URLSession = .shared,
+         archive: UsageArchive = UsageArchive(),
+         loadCredential: @escaping @Sendable () -> OpenCodeCredentials.Credential?) {
+        self.id = id
+        self.displayName = displayName
+        self.session = session
+        self.archive = archive
+        self.loadCredential = loadCredential
         self.retryNoEarlierThan = archive.loadBackoffUntil(providerID: id)
     }
 
@@ -49,7 +64,7 @@ actor OpenCodeProvider: UsageProvider {
     }
 
     nonisolated func account() -> ProviderAccount? {
-        guard OpenCodeCredentials.load() != nil else { return nil }
+        guard loadCredential() != nil else { return nil }
         return ProviderAccount(
             label: nil,   // the key carries no address
             plan: "Go",
@@ -67,7 +82,7 @@ actor OpenCodeProvider: UsageProvider {
 
         // Re-read on every fetch. This is an ordinary file, not a keychain
         // item: reading it puts no prompt in front of anyone.
-        guard let credential = OpenCodeCredentials.load() else {
+        guard let credential = loadCredential() else {
             throw UsageProviderError.needsAuth
         }
 

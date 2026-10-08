@@ -15,7 +15,7 @@ final class ProviderDisconnectionTests: XCTestCase {
                            disconnected: disconnected, order: order), archive)
     }
 
-    func testSettingsDoesNotReadADisconnectedAccount() {
+    func testSettingsKeepsDisconnectedAccountIdentityWithoutFetchingUsage() {
         let disabled = Probe(id: "disabled")
         let enabled = Probe(id: "enabled")
         let (store, _) = makeStore([disabled, enabled], disconnected: [disabled.id])
@@ -23,8 +23,8 @@ final class ProviderDisconnectionTests: XCTestCase {
         let summaries = store.providerSummaries
 
         XCTAssertEqual(summaries.map(\.id), [disabled.id, enabled.id])
-        XCTAssertNil(summaries.first?.account)
-        XCTAssertEqual(disabled.accountReads, 0)
+        XCTAssertEqual(summaries.first?.account?.label, "Test account")
+        XCTAssertEqual(disabled.accountReads, 1)
         XCTAssertEqual(enabled.accountReads, 1)
     }
 
@@ -279,6 +279,33 @@ final class ProviderDisconnectionTests: XCTestCase {
                               order: ["codex", "cursor", "claude"])
 
         XCTAssertEqual(store.snapshots.map(\.id), ["codex", "claude"])
+    }
+
+    /// Regression: profiles of one provider are accounts, not replacements
+    /// for one another. The store exposes all 3 + 4 + 3 entries to both the
+    /// notch and Settings, keyed by their stable profile IDs.
+    func testTenProfilesOfThreeProviderFamiliesRemainVisibleSimultaneously() {
+        let ids = [
+            "codex", "codex-work", "codex-client",
+            "claude", "claude-work", "claude-client", "claude-testing",
+            "gemini", "antigravity-work", "antigravity-client",
+        ]
+        let (store, _) = makeStore(ids.map { Probe(id: $0) })
+
+        XCTAssertEqual(store.snapshots.map(\.id), ids)
+        XCTAssertEqual(store.notchSnapshots.map(\.id), ids)
+        XCTAssertEqual(store.providerSummaries.map(\.id), ids)
+        XCTAssertEqual(Set(store.snapshots.map(\.id)).count, 10)
+    }
+
+    func testDisablingOneProfileDoesNotHideItsSiblingAccounts() {
+        let ids = ["codex", "codex-work", "codex-client"]
+        let (store, _) = makeStore(ids.map { Probe(id: $0) }, disconnected: ["codex-work"])
+
+        XCTAssertEqual(store.snapshots.map(\.id), ["codex", "codex-client"])
+        XCTAssertEqual(store.notchSnapshots.map(\.id), ["codex", "codex-client"])
+        XCTAssertEqual(store.providerSummaries.map(\.id), ids,
+                       "Settings retains the disabled account so it can be re-enabled")
     }
 }
 

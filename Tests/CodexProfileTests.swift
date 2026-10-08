@@ -83,6 +83,14 @@ final class CodexProfileTests: XCTestCase {
         XCTAssertNil(CodexProfile.slug(fromProviderID: "codextra"))
     }
 
+    func testManagedProfileOffersOpenCodex() {
+        let profile = CodexProfile(
+            slug: "managed-edgar",
+            configDirectory: URL(fileURLWithPath: "/tmp/Codenotch/Accounts/codex/edgar"))
+        XCTAssertEqual(CodexLocalProvider(profile: profile).signInRoute,
+                       .openApp(bundleID: "com.openai.codex", name: "Codex"))
+    }
+
     func testAccountLabelsComeFromEachProfilesCredentials() throws {
         let root = try home([".codex": [], ".codex-work": []])
         let personal = CodexProfile.default(home: root)

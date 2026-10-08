@@ -1,24 +1,39 @@
 import Foundation
 
 actor AmpProvider: UsageProvider {
-    nonisolated let id = "amp"
-    nonisolated var displayName: String { L10n.t("Amp") }
+    nonisolated let id: String
+    nonisolated let displayName: String
     nonisolated let glyph = ProviderGlyph.amp
 
     private let session: URLSession
     private let archive: UsageArchive
-    nonisolated private let secretsURL: URL
+    nonisolated private let loadToken: @Sendable () throws -> String
     private let now: @Sendable () -> Date
     private var retryNoEarlierThan: Date?
 
     init(session: URLSession = .shared, archive: UsageArchive = UsageArchive(),
          secretsURL: URL = AmpCredentials.secretsURL,
          now: @escaping @Sendable () -> Date = { Date() }) {
+        self.id = "amp"
+        self.displayName = L10n.t("Amp")
         self.session = session
         self.archive = archive
-        self.secretsURL = secretsURL
+        self.loadToken = { try AmpCredentials.load(from: secretsURL) }
         self.now = now
-        retryNoEarlierThan = archive.loadBackoffUntil(providerID: "amp")
+        retryNoEarlierThan = archive.loadBackoffUntil(providerID: id)
+    }
+
+    init(id: String, displayName: String, session: URLSession = .shared,
+         archive: UsageArchive = UsageArchive(),
+         loadToken: @escaping @Sendable () throws -> String,
+         now: @escaping @Sendable () -> Date = { Date() }) {
+        self.id = id
+        self.displayName = displayName
+        self.session = session
+        self.archive = archive
+        self.loadToken = loadToken
+        self.now = now
+        retryNoEarlierThan = archive.loadBackoffUntil(providerID: id)
     }
 
     nonisolated var signInRoute: SignInRoute {
@@ -26,7 +41,7 @@ actor AmpProvider: UsageProvider {
     }
 
     nonisolated func account() -> ProviderAccount? {
-        guard (try? AmpCredentials.load(from: secretsURL)) != nil else { return nil }
+        guard (try? loadToken()) != nil else { return nil }
         return ProviderAccount(label: nil, plan: nil, source: L10n.t("Amp CLI"),
                                manageURL: URL(string: "https://ampcode.com/settings"))
     }
@@ -37,7 +52,7 @@ actor AmpProvider: UsageProvider {
         }
         // Plain-file reads never prompt and follow login/key rotation without
         // copying or modifying the credential owned by Amp.
-        let token = try AmpCredentials.load(from: secretsURL)
+        let token = try loadToken()
         var request = URLRequest(url: AmpUsage.endpoint)
         request.httpMethod = "POST"
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")

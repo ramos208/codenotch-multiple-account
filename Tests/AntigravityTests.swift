@@ -1303,7 +1303,7 @@ final class AppPresenceTests: XCTestCase {
 
     /// What separates the two accessory modes.
     func testOnlyTheMenuBarOptionMakesAStatusItem() {
-        XCTAssertFalse(AppPresence.dock.wantsStatusItem)
+        XCTAssertTrue(AppPresence.dock.wantsStatusItem)
         XCTAssertTrue(AppPresence.menuBar.wantsStatusItem)
         XCTAssertFalse(AppPresence.hidden.wantsStatusItem)
     }

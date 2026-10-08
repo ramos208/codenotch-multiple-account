@@ -19,6 +19,11 @@ struct AntigravityProfile: Equatable, Hashable {
     /// Nil for `~/.gemini/antigravity`; the part after `antigravity-` otherwise.
     let slug: String?
     let configDirectory: URL
+    /// Codenotch-owned OAuth accounts use a UUID rather than a directory slug.
+    /// Their secrets live in Keychain; this profile carries display metadata only.
+    var managedAccountID: UUID? = nil
+    var managedName: String? = nil
+    var managedEmail: String? = nil
 
     static var homeDirectory: URL { URL(fileURLWithPath: NSHomeDirectory()) }
 
@@ -26,6 +31,13 @@ struct AntigravityProfile: Equatable, Hashable {
     static func `default`(home: URL = homeDirectory) -> AntigravityProfile {
         let dir = home.appendingPathComponent(".gemini").appendingPathComponent(directoryPrefix)
         return AntigravityProfile(slug: nil, configDirectory: dir)
+    }
+
+    /// The single source of truth for a named profile's on-disk location.
+    static func named(_ slug: String, home: URL = homeDirectory) -> AntigravityProfile {
+        let dir = home.appendingPathComponent(".gemini")
+            .appendingPathComponent("\(directoryPrefix)-\(slug)")
+        return AntigravityProfile(slug: slug, configDirectory: dir)
     }
 
     /// The default profile followed by every `~/.gemini/antigravity-<slug>` that contains
@@ -39,11 +51,22 @@ struct AntigravityProfile: Equatable, Hashable {
             guard let slug = slug(fromDirectoryName: name) else { return nil }
             let directory = geminiDir.appendingPathComponent(name)
             guard isProfileDirectory(directory, fileManager: fileManager) else { return nil }
-            let candidate = AntigravityProfile(slug: slug, configDirectory: directory)
+            let candidate = AntigravityProfile.named(slug, home: home)
             guard hasCredential(candidate) else { return nil }
             return candidate
         }
         return [.default(home: home)] + extras.sorted { $0.slug! < $1.slug! }
+    }
+
+    static func discoverManaged(root: URL = AccountProfileManager.managedRoot(),
+                                fileManager: FileManager = .default) -> [AntigravityProfile] {
+        AntigravityManagedAccountStore(root: root, fileManager: fileManager).accounts().map { account in
+            AntigravityProfile(slug: nil,
+                               configDirectory: account.directory,
+                               managedAccountID: account.id,
+                               managedName: account.name,
+                               managedEmail: account.email)
+        }
     }
 
     /// `antigravity-work` -> `work`; anything else -> nil. The bare `antigravity` is
@@ -77,14 +100,21 @@ struct AntigravityProfile: Equatable, Hashable {
     // MARK: - Identity
 
     /// `gemini` for the default, `antigravity-<slug>` for the rest.
-    var id: String { slug.map { "\(Self.directoryPrefix)-\($0)" } ?? Self.defaultID }
+    var id: String {
+        if let managedAccountID { return "antigravity-managed-\(managedAccountID.uuidString.lowercased())" }
+        return slug.map { "\(Self.directoryPrefix)-\($0)" } ?? Self.defaultID
+    }
 
     /// `Antigravity`, or `Antigravity (work)`.
-    var displayName: String { slug.map { "Antigravity (\($0))" } ?? "Antigravity" }
+    var displayName: String {
+        if let managedName { return "Antigravity (\(managedName))" }
+        return slug.map { "Antigravity (\($0))" } ?? "Antigravity"
+    }
 
     /// Whether a provider id names an Antigravity profile, default or otherwise.
     static func isAntigravity(providerID: String) -> Bool {
-        providerID == defaultID || (providerID.hasPrefix(directoryPrefix + "-") && slug(fromProviderID: providerID) != nil)
+        providerID == defaultID || providerID.hasPrefix("antigravity-managed-") ||
+            (providerID.hasPrefix(directoryPrefix + "-") && slug(fromProviderID: providerID) != nil)
     }
 
     /// The slug back out of a provider id.
@@ -108,11 +138,15 @@ struct AntigravityProfile: Equatable, Hashable {
     }
 
     var sourceName: String {
-        guard let slug else { return "Antigravity" }
+        if managedAccountID != nil { return L10n.t("Codenotch Antigravity OAuth") }
+        guard slug != nil else { return "Antigravity" }
         return L10n.t("Antigravity in \(displayPath)")
     }
 
     var signInRoute: SignInRoute {
+        if managedAccountID != nil {
+            return .guidance(L10n.t("Use Add Account to re-authenticate this Antigravity account"))
+        }
         guard let slug else {
             return .openApp(bundleID: "com.google.antigravity", name: "Antigravity")
         }

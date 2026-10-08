@@ -10,15 +10,27 @@ import os
 /// sign-out deletes it. Polling and error handling follow the same path every
 /// other provider takes through `UsageStore`.
 actor OllamaProvider: UsageProvider {
-    nonisolated let id = "ollama"
-    nonisolated let displayName = "Ollama"
+    nonisolated let id: String
+    nonisolated let displayName: String
     nonisolated let glyph = ProviderGlyph.ollama
 
     private let endpoint = URL(string: "https://ollama.com/api/usage")!
     private let session: URLSession
+    private let loadKey: @Sendable () -> String?
+    nonisolated private let keyIsPresent: @Sendable () -> Bool
+    nonisolated private let deleteKey: @Sendable () -> Void
 
-    init(session: URLSession = .shared) {
+    init(id: String = "ollama", displayName: String = "Ollama",
+         session: URLSession = .shared,
+         loadKey: @escaping @Sendable () -> String? = { OllamaCredentials.load() },
+         keyIsPresent: @escaping @Sendable () -> Bool = { OllamaCredentials.isPresent },
+         deleteKey: @escaping @Sendable () -> Void = { _ = OllamaCredentials.delete() }) {
+        self.id = id
+        self.displayName = displayName
         self.session = session
+        self.loadKey = loadKey
+        self.keyIsPresent = keyIsPresent
+        self.deleteKey = deleteKey
     }
 
     nonisolated var signInRoute: SignInRoute {
@@ -26,7 +38,7 @@ actor OllamaProvider: UsageProvider {
     }
 
     nonisolated func account() -> ProviderAccount? {
-        guard OllamaCredentials.isPresent else { return nil }
+        guard keyIsPresent() else { return nil }
         return ProviderAccount(
             label: nil,
             plan: nil,
@@ -36,7 +48,7 @@ actor OllamaProvider: UsageProvider {
     }
 
     func fetchSnapshot() async throws -> ProviderSnapshot {
-        guard let key = OllamaCredentials.load() else { throw UsageProviderError.needsAuth }
+        guard let key = loadKey() else { throw UsageProviderError.needsAuth }
 
         var request = URLRequest(url: endpoint)
         request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
@@ -68,7 +80,7 @@ actor OllamaProvider: UsageProvider {
     }
 
     nonisolated func signOut() async {
-        OllamaCredentials.delete()
+        deleteKey()
     }
 
     nonisolated func forgetCachedCredential() {

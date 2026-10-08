@@ -31,6 +31,12 @@ struct ClaudeProfile: Equatable, Hashable {
                       configDirectory: home.appendingPathComponent(directoryPrefix))
     }
 
+    /// The single source of truth for a named profile's on-disk location.
+    static func named(_ slug: String, home: URL = homeDirectory) -> ClaudeProfile {
+        ClaudeProfile(slug: slug,
+                      configDirectory: home.appendingPathComponent("\(directoryPrefix)-\(slug)"))
+    }
+
     static var homeDirectory: URL { URL(fileURLWithPath: NSHomeDirectory()) }
 
     /// The default profile followed by every `~/.claude-<slug>` that Claude
@@ -65,7 +71,7 @@ struct ClaudeProfile: Equatable, Hashable {
             guard let slug = slug(fromDirectoryName: name) else { return nil }
             let directory = home.appendingPathComponent(name)
             guard isProfileDirectory(directory, fileManager: fileManager) else { return nil }
-            let candidate = ClaudeProfile(slug: slug, configDirectory: directory)
+            let candidate = ClaudeProfile.named(slug, home: home)
             guard hasCredential(candidate) else {
                 Log.usage.debug("ignoring \(candidate.displayPath, privacy: .public): looks like a profile but has no token under \(candidate.keychainService, privacy: .public)")
                 return nil
@@ -74,6 +80,21 @@ struct ClaudeProfile: Equatable, Hashable {
         }
         return [ClaudeProfile.default(home: home)]
             + extras.sorted { $0.slug! < $1.slug! }
+    }
+
+    /// Codenotch-managed Claude logins use the same supported
+    /// `CLAUDE_CONFIG_DIR` mechanism, rooted in Application Support so the
+    /// user's ordinary `~/.claude` session is never touched.
+    static func discoverManaged(fileManager: FileManager = .default,
+                                root: URL = AccountProfileManager.managedRoot()
+                                    .appendingPathComponent("claude", isDirectory: true)) -> [ClaudeProfile] {
+        let names = (try? fileManager.contentsOfDirectory(atPath: root.path)) ?? []
+        return names.sorted().compactMap { slug in
+            let directory = root.appendingPathComponent(slug, isDirectory: true)
+            let profile = ClaudeProfile(slug: "managed-\(slug)", configDirectory: directory)
+            guard hasKeychainCredential(profile) else { return nil }
+            return profile
+        }
     }
 
     /// Whether Claude Code has ever filed a token for this profile's directory.
@@ -120,6 +141,7 @@ struct ClaudeProfile: Equatable, Hashable {
     /// usage provider id and the activity monitor key, so a profile's sessions
     /// land in its own ring.
     var id: String { slug.map { "\(Self.defaultID)-\($0)" } ?? Self.defaultID }
+    var isManaged: Bool { slug?.hasPrefix("managed-") == true }
 
     /// `Claude Gmail`, `Claude Acme` — the account's own name where Claude Code
     /// records one — and `Claude` or `Claude (work)` where it does not.

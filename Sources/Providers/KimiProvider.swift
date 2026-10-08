@@ -10,14 +10,17 @@ import os
 /// for the file. A 404 is the endpoint's own answer for an account with no
 /// Kimi Code plan — readable, but metering nothing, and not an error.
 actor KimiProvider: UsageProvider {
-    nonisolated let id = "kimi"
-    nonisolated let displayName = "Kimi"
+    nonisolated let id: String
+    nonisolated let displayName: String
     nonisolated let glyph = ProviderGlyph.kimi
 
     private let session: URLSession
     private let authURL: URL
 
-    init(session: URLSession = .shared, authURL: URL = KimiCredentials.authURL) {
+    init(id: String = "kimi", displayName: String = "Kimi",
+         session: URLSession = .shared, authURL: URL = KimiCredentials.authURL) {
+        self.id = id
+        self.displayName = displayName
         self.session = session
         self.authURL = authURL
     }
@@ -29,8 +32,7 @@ actor KimiProvider: UsageProvider {
     nonisolated func account() -> ProviderAccount? { KimiCredentials.account() }
 
     func fetchSnapshot() async throws -> ProviderSnapshot {
-        let credentials = try KimiCredentials.load(from: authURL)
-        if credentials.isExpired { throw UsageProviderError.credentialExpired }
+        let credentials = try await KimiCredentials.live(from: authURL, session: session)
 
         let body = try await fetch(token: credentials.accessToken)
         Log.usage.debug("kimi usages -> \(body.prefix(400), privacy: .public)")

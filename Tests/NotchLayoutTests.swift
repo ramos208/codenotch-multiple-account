@@ -497,10 +497,10 @@ final class PreferencesTests: XCTestCase {
                        "a returning user would be introduced to the app again")
     }
 
-    func testEverythingIsConnectedByDefault() {
+    func testNothingIsConnectedByDefault() {
         let p = preferences()
-        XCTAssertTrue(p.isConnected("claude"))
-        XCTAssertTrue(p.isConnected("codex"))
+        XCTAssertFalse(p.isConnected("claude"))
+        XCTAssertFalse(p.isConnected("codex"))
         XCTAssertFalse(p.isConnected("a-provider-that-does-not-exist-yet"))
     }
 
@@ -508,7 +508,7 @@ final class PreferencesTests: XCTestCase {
         let p = preferences()
         p.setConnected(false, for: "cursor")
         XCTAssertFalse(p.isConnected("cursor"))
-        XCTAssertTrue(p.isConnected("claude"))
+        XCTAssertFalse(p.isConnected("claude"))
         p.setConnected(true, for: "cursor")
         XCTAssertTrue(p.isConnected("cursor"))
     }
@@ -1107,7 +1107,7 @@ final class RenameMigrationTests: XCTestCase {
     func testMigratingWithNothingToMigrateIsHarmless() {
         let (defaults, _) = suite()
         Preferences.migrateFromPreviousName(into: defaults, from: "does.not.exist")
-        XCTAssertTrue(Preferences(defaults: defaults).isConnected("claude"))
+        XCTAssertFalse(Preferences(defaults: defaults).isConnected("claude"))
     }
 }
 

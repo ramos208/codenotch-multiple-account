@@ -9,8 +9,8 @@ final class Preferences: ObservableObject {
     static let showUsagePaceKey = "showUsagePace"
 
     /// Provider IDs that currently have a ring. Stored as the ones that are
-    /// on, so a provider added later stays off until someone switches it on —
-    /// Claude and Codex excepted, which still default on as a family.
+    /// on, so every provider stays off until someone explicitly adds or
+    /// switches it on.
     @Published var connectedProviders: Set<String> {
         didSet { defaults.set(Array(connectedProviders), forKey: Keys.connected) }
     }
@@ -19,6 +19,14 @@ final class Preferences: ObservableObject {
     /// new provider is recognised as new rather than as "never chosen".
     @Published private(set) var seenProviders: Set<String> {
         didSet { defaults.set(Array(seenProviders), forKey: Keys.seen) }
+    }
+
+    /// Providers the user has explicitly added at least once. This remains set
+    /// when its ring is toggled off, allowing Settings to show that account in
+    /// "Not connected" without listing credentials merely discovered from
+    /// another app on first launch.
+    @Published private(set) var addedProviders: Set<String> {
+        didSet { defaults.set(Array(addedProviders), forKey: Keys.added) }
     }
 
     /// Loaded-model cells hide without stopping the shared runtime. Stored as
@@ -508,6 +516,7 @@ final class Preferences: ObservableObject {
         static let disconnected = "hiddenProviders"
         static let connected = "connectedProviders"
         static let seen = "seenProviders"
+        static let added = "addedProviders"
         static let disabledModels = "disabledModels"
         static let ollamaEndpoint = "ollamaEndpoint"
         static let phoneLinkEnabled = "phoneLinkEnabled"
@@ -768,6 +777,8 @@ final class Preferences: ObservableObject {
         }
         self.connectedProviders = connected.filter { !Self.isModelCell($0) }
         self.seenProviders = seen.filter { !Self.isModelCell($0) }
+        let storedAdded = defaults.stringArray(forKey: Keys.added).map(Set.init)
+        self.addedProviders = (storedAdded ?? connected).filter { !Self.isModelCell($0) }
         self.pendingHidden = hidden
         let models: Set<String>
         if let storedDisabled = defaults.stringArray(forKey: Keys.disabledModels) {
@@ -1039,11 +1050,10 @@ final class Preferences: ObservableObject {
         menuBarProviders = menuBarLimits.choosing(shown, providerID, among: listed).chosen
     }
 
-    /// Claude and Codex stay on for a first install and for a newly discovered
-    /// profile. Everyone else starts off.
+    /// No provider family is automatically displayed. Kept as a named rule for
+    /// migration callers and tests that need to assert first-install behavior.
     nonisolated static func isDefaultOnFamily(_ providerID: String) -> Bool {
-        ClaudeProfile.isClaude(providerID: providerID)
-            || CodexProfile.isCodex(providerID: providerID)
+        false
     }
 
     /// Model cells are `providerID:model:…`. A new loaded model is not a new
@@ -1066,7 +1076,11 @@ final class Preferences: ObservableObject {
             if providerID == "minimax" { return false }
             return !hidden.contains(providerID)
         }
-        return Self.isDefaultOnFamily(providerID)
+        return false
+    }
+
+    func wasExplicitlyAdded(_ providerID: String) -> Bool {
+        addedProviders.contains(providerID)
     }
 
     func setConnected(_ connected: Bool, for providerID: String) {
@@ -1086,32 +1100,42 @@ final class Preferences: ObservableObject {
             return
         }
         if defaults.object(forKey: Keys.connected) == nil {
-            // First install: persist Claude and Codex as on, then apply this toggle.
-            connectedProviders = ["claude", "codex"]
+            // First install: persist an empty choice, then apply only the
+            // account the user explicitly selected.
+            connectedProviders = []
         }
         if connected {
             connectedProviders.insert(providerID)
+            addedProviders.insert(providerID)
         } else {
             connectedProviders.remove(providerID)
         }
         seenProviders.insert(providerID)
     }
 
+    /// Remove every preference owned by an account that has been deleted.
+    /// This is stronger than switching its ring off: a later account must not
+    /// inherit the old account's name, ordering, alert choices, or add-state.
+    func forgetAccount(_ providerID: String) {
+        connectedProviders.remove(providerID)
+        addedProviders.remove(providerID)
+        seenProviders.remove(providerID)
+        providerOrder.removeAll { $0 == providerID }
+        accountNicknames.removeValue(forKey: providerID)
+        mutedAlertProviders.remove(providerID)
+        pendingHidden?.remove(providerID)
+    }
+
     /// Fold this Mac's current provider ids into the stored on-list.
     ///
-    /// First launch writes Claude and Codex. An upgrade from `hiddenProviders`
-    /// inverts that off-list against `discoveredIDs`. After that, only a
-    /// never-seen Claude or Codex id is added automatically. Model cells stay
-    /// on `disabledModels` and are not inverted.
+    /// First launch writes an empty on-list. An upgrade from `hiddenProviders`
+    /// still inverts that historic off-list so an existing user's choices are
+    /// preserved. Newly discovered providers never turn themselves on.
     func reconcile(discoveredIDs: [String]) {
         let discovered = Set(discoveredIDs.filter { !Self.isModelCell($0) })
         if defaults.object(forKey: Keys.connected) != nil {
             connectedProviders.subtract(connectedProviders.filter(Self.isModelCell))
             seenProviders.subtract(seenProviders.filter(Self.isModelCell))
-            let novel = discovered.subtracting(seenProviders)
-            for id in novel where Self.isDefaultOnFamily(id) {
-                connectedProviders.insert(id)
-            }
             seenProviders.formUnion(discovered)
             return
         }
@@ -1121,11 +1145,12 @@ final class Preferences: ObservableObject {
             connectedProviders = discovered
                 .subtracting(hidden.filter { !Self.isModelCell($0) })
                 .subtracting(["minimax"])
+            addedProviders.formUnion(connectedProviders)
             seenProviders = discovered
             pendingHidden = nil
             return
         }
-        connectedProviders = Set(discovered.filter(Self.isDefaultOnFamily))
+        connectedProviders = []
         seenProviders = discovered
     }
 

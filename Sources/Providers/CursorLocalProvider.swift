@@ -11,14 +11,26 @@ import os
 /// login — removes the question. There is only ever one account, the one
 /// actually being used.
 actor CursorLocalProvider: UsageProvider {
-    nonisolated let id = "cursor"
-    nonisolated let displayName = "Cursor"
+    nonisolated let id: String
+    nonisolated let displayName: String
     nonisolated let glyph = ProviderGlyph.cursor
 
     private let endpoint = URL(string: "https://cursor.com/api/usage-summary")!
     private let session: URLSession
+    nonisolated private let managedDirectory: URL?
 
     init(session: URLSession = .shared) {
+        self.id = "cursor"
+        self.displayName = "Cursor"
+        self.session = session
+        self.managedDirectory = nil
+    }
+
+    init(id: String, displayName: String, managedDirectory: URL,
+         session: URLSession = .shared) {
+        self.id = id
+        self.displayName = displayName
+        self.managedDirectory = managedDirectory
         self.session = session
     }
 
@@ -32,7 +44,9 @@ actor CursorLocalProvider: UsageProvider {
         return CursorCredentials.signInRoute(editorInstalled: installed)
     }
 
-    nonisolated func account() -> ProviderAccount? { CursorCredentials.account() }
+    nonisolated func account() -> ProviderAccount? {
+        managedDirectory.map(CursorCredentials.managedAccount(in:)) ?? CursorCredentials.account()
+    }
 
     nonisolated func forgetCachedCredential() { CursorCredentials.forgetCachedAgent() }
 
@@ -40,7 +54,8 @@ actor CursorLocalProvider: UsageProvider {
         // Re-read every time: the editor rotates this, and holding a stale copy
         // would mean signing ourselves out for no reason. The agent token is
         // cached inside `CursorAgentKeychain` so the keychain is not.
-        let credentials = try CursorCredentials.load()
+        if let managedDirectory { CursorCredentials.refreshManaged(in: managedDirectory) }
+        let credentials = try managedDirectory.map(CursorCredentials.loadManaged(in:)) ?? CursorCredentials.load()
 
         var request = URLRequest(url: endpoint)
         request.setValue(credentials.sessionCookie, forHTTPHeaderField: "Cookie")

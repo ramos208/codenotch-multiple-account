@@ -15,13 +15,14 @@ import os
 /// Kilo Gateway reads the balance only — the coding-plan procedures belong to
 /// an OAuth login.
 actor KiloProvider: UsageProvider {
-    nonisolated let id = "kilo"
-    nonisolated let displayName = "Kilo"
+    nonisolated let id: String
+    nonisolated let displayName: String
     nonisolated let glyph = ProviderGlyph.kilo
 
     private let session: URLSession
     private let archive: UsageArchive
     private let authURL: URL
+    nonisolated private let loadCredentials: @Sendable () -> KiloCredentials.Credential?
     private let baseURL: URL
     /// Set when the endpoint returns 429. Until it passes, refreshes are
     /// skipped without touching the network — the same bargain Claude's and
@@ -33,9 +34,25 @@ actor KiloProvider: UsageProvider {
 
     init(session: URLSession = .shared, archive: UsageArchive = UsageArchive(),
          authURL: URL = KiloCredentials.authURL, baseURL: URL = URL(string: "https://api.kilo.ai")!) {
+        self.id = "kilo"
+        self.displayName = "Kilo"
         self.session = session
         self.archive = archive
         self.authURL = authURL
+        self.loadCredentials = { KiloCredentials.load(from: authURL) }
+        self.baseURL = baseURL
+        self.retryNoEarlierThan = archive.loadBackoffUntil(providerID: id)
+    }
+
+    init(id: String, displayName: String, session: URLSession = .shared,
+         archive: UsageArchive = UsageArchive(), baseURL: URL = URL(string: "https://api.kilo.ai")!,
+         loadCredentials: @escaping @Sendable () -> KiloCredentials.Credential?) {
+        self.id = id
+        self.displayName = displayName
+        self.session = session
+        self.archive = archive
+        self.authURL = KiloCredentials.authURL
+        self.loadCredentials = loadCredentials
         self.baseURL = baseURL
         self.retryNoEarlierThan = archive.loadBackoffUntil(providerID: id)
     }
@@ -50,7 +67,7 @@ actor KiloProvider: UsageProvider {
     }
 
     nonisolated func account() -> ProviderAccount? {
-        guard let credentials = KiloCredentials.load(from: authURL) else { return nil }
+        guard loadCredentials() != nil else { return nil }
         return ProviderAccount(
             label: nil,   // the token carries no address
             plan: lastKnownPlan,
@@ -69,7 +86,7 @@ actor KiloProvider: UsageProvider {
         // Re-read on every fetch. This is an ordinary file, not a keychain
         // item: reading it puts no prompt in front of anyone, and the CLI
         // refreshes the access token in place.
-        guard let credentials = KiloCredentials.load(from: authURL) else {
+        guard let credentials = loadCredentials() else {
             throw UsageProviderError.needsAuth
         }
 

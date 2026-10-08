@@ -24,6 +24,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     private let ollamaRelay: OllamaActivityRelay?
     private let lmstudioMetrics: LMStudioMetrics?
     private let usageStore: UsageStore?
+    private let accountProfileManager: AccountProfileManager?
     let phoneLinkPairing: PhoneLinkPairing?
     let phoneLinkRegistry: PhoneLinkRegistry?
     let phoneLinkServerStatus: PhoneLinkServerStatus?
@@ -49,10 +50,13 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
          sendTestNotification: (() -> Void)? = nil,
          usageStore: UsageStore? = nil,
          ollamaRelay: OllamaActivityRelay? = nil,
-         lmstudioMetrics: LMStudioMetrics? = nil, phoneLinkPairing: PhoneLinkPairing? = nil, phoneLinkRegistry: PhoneLinkRegistry? = nil, phoneLinkServerStatus: PhoneLinkServerStatus? = nil) {
+         lmstudioMetrics: LMStudioMetrics? = nil,
+         accountProfileManager: AccountProfileManager? = nil,
+         phoneLinkPairing: PhoneLinkPairing? = nil, phoneLinkRegistry: PhoneLinkRegistry? = nil, phoneLinkServerStatus: PhoneLinkServerStatus? = nil) {
         self.ollamaRelay = ollamaRelay
         self.lmstudioMetrics = lmstudioMetrics
         self.usageStore = usageStore
+        self.accountProfileManager = accountProfileManager
         self.phoneLinkPairing = phoneLinkPairing
         self.phoneLinkRegistry = phoneLinkRegistry
         self.phoneLinkServerStatus = phoneLinkServerStatus
@@ -269,6 +273,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
                                    updater: updater,
                                    ollamaRelay: ollamaRelay, lmstudioMetrics: lmstudioMetrics,
                                    usageStore: usageStore,
+                                   accountProfileManager: accountProfileManager,
                                    previewResetAlert: previewResetAlert,
                                    previewSessionLimitAlert: previewSessionLimitAlert,
                                    previewWeeklyLimitAlert: previewWeeklyLimitAlert,

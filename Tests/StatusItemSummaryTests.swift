@@ -470,21 +470,43 @@ final class StatusItemSummaryTests: XCTestCase {
 
     // MARK: - Room in the bar
 
-    /// Two Claude logins are two identical marks; the second says which it is.
-    func testProfilesWithTheSameMarkAreToldApartBySlug() {
+    /// Two Claude logins are two identical marks; both say which account they
+    /// belong to, including the default profile.
+    func testProfilesWithTheSameMarkAreToldApartByName() {
         let result = summary([claude(0.72, resetIn: 2 * hour), claude(0.12, resetIn: 4 * hour, id: "claude-work")])
-        XCTAssertEqual(result.entries.map(\.label), [nil, "work"])
+        XCTAssertEqual(result.entries.map(\.label), ["Claude", "Claude (work)"])
     }
 
-    /// Past two, the countdowns stay in the tooltip; past four, in the menu.
-    func testTheBarGoesCompactPastTwoAndStopsAtFour() {
+    /// Past two, countdowns stay in the tooltip, but accounts are never
+    /// dropped: every configured profile remains visible simultaneously.
+    func testTheBarGoesCompactPastTwoAndKeepsEveryAccount() {
         let many = [claude(0.72, resetIn: hour), codex(0.41, resetIn: hour),
                     other("glm", glyph: .glm, length: 5 * hour), other("kimi", glyph: .kimi, length: 5 * hour),
                     other("opencode", glyph: .opencode, length: 5 * hour)]
         let result = summary(many)
-        XCTAssertEqual(result.entries.map(\.id), ["claude", "codex", "glm", "kimi"])
+        XCTAssertEqual(result.entries.map(\.id), ["claude", "codex", "glm", "kimi", "opencode"])
         XCTAssertTrue(result.isCompact)
         XCTAssertFalse(summary(Array(many.prefix(2))).isCompact)
+    }
+
+    func testThreeAntigravityAccountsKeepIndependentLabelsAndReadings() {
+        func account(_ id: String, _ name: String, _ used: Double) -> ProviderSnapshot {
+            ProviderSnapshot(
+                id: id, displayName: name, glyph: .antigravity,
+                fidelity: .official, status: .ok,
+                windows: [LimitWindow(id: "gemini-hourly", group: "Gemini Models",
+                                      label: "5-hour Limit", usedFraction: used,
+                                      resetsAt: now.addingTimeInterval(hour), duration: 5 * hour)],
+                headlineID: "gemini-hourly")
+        }
+        let result = summary([
+            account("gemini", "Personal", 0.45),
+            account("antigravity-work", "Work", 0.21),
+            account("antigravity-client", "Client", 0.83),
+        ])
+        XCTAssertEqual(result.entries.map(\.id), ["gemini", "antigravity-work", "antigravity-client"])
+        XCTAssertEqual(result.entries.map(\.label), ["Personal", "Work", "Client"])
+        XCTAssertEqual(result.entries.map(\.percent), ["45%", "21%", "83%"])
     }
 
     /// The items to the left of this one shift whenever it changes width, so

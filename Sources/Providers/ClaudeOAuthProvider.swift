@@ -577,10 +577,13 @@ actor ClaudeOAuthProvider: UsageProvider {
     }
 
     nonisolated var signInRoute: SignInRoute {
+        if profile.isManaged {
+            return .guidance(L10n.t("Re-authenticate this managed account from Add Account in Codenotch."))
+        }
         // Names the command for a profile, because that is the only way to
         // reach it: plain `claude` signs the default one in, not this.
-        .command("\(profile.signInCommand) auth login", name: displayName,
-                 install: URL(string: "https://docs.claude.com/en/docs/claude-code/setup"))
+        return .command("\(profile.signInCommand) auth login", name: displayName,
+                        install: URL(string: "https://docs.claude.com/en/docs/claude-code/setup"))
     }
 
     /// Reached only from "Allow access…", so this is the one path allowed to

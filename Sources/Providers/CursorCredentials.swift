@@ -35,6 +35,46 @@ struct CursorCredentials {
             .appendingPathComponent(".cursor/cli-config.json")
     }
 
+    static func managedAuthURL(in directory: URL) -> URL {
+        directory.appendingPathComponent(".cursor/auth.json")
+    }
+
+    static func managedConfigURL(in directory: URL) -> URL {
+        directory.appendingPathComponent(".cursor/cli-config.json")
+    }
+
+    static func managedAccount(in directory: URL) -> ProviderAccount? {
+        agentAccount(from: managedConfigURL(in: directory))
+    }
+
+    static func loadManaged(in directory: URL) throws -> CursorCredentials {
+        let url = managedAuthURL(in: directory)
+        guard let data = try? Data(contentsOf: url),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let token = root["accessToken"] as? String, !token.isEmpty
+        else { throw UsageProviderError.needsAuth }
+        return try session(fromAgentToken: token, configURL: managedConfigURL(in: directory))
+    }
+
+    static func refreshManaged(in directory: URL) {
+        let candidates = [
+            FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/bin/agent").path,
+            "/opt/homebrew/bin/agent", "/usr/local/bin/agent",
+        ]
+        guard let executable = candidates.first(where: FileManager.default.isExecutableFile(atPath:)) else { return }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = ["status"]
+        var environment = ProcessInfo.processInfo.environment
+        environment["HOME"] = directory.path
+        environment["CURSOR_CONFIG_DIR"] = directory.appendingPathComponent(".cursor").path
+        environment["AGENT_CLI_CREDENTIAL_STORE"] = "file"
+        process.environment = environment
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        do { try process.run(); process.waitUntilExit() } catch { }
+    }
+
     /// Minted by ToDesktop, who build Cursor — stable across updates, but not
     /// across Cursor leaving ToDesktop or rebranding. Kept here beside the store
     /// path so the two facts about a Cursor installation change together: the

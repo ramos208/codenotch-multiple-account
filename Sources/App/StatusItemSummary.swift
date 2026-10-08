@@ -41,11 +41,6 @@ struct StatusItemSummary: Equatable {
     /// Two readings sit side by side comfortably. Past that each keeps its mark
     /// and percentage, and the countdowns stay in the tooltip and the menu.
     static let fullEntryLimit = 2
-    /// Past this many the rest are in the menu only. macOS hides a status item
-    /// that does not fit rather than squeezing it, and with the app out of the
-    /// Dock this item is the only way into it.
-    static let entryLimit = 4
-
     var isCompact: Bool { entries.count > Self.fullEntryLimit }
 
     /// Whether the bar has anything to say about this provider: it meters a
@@ -69,7 +64,7 @@ struct StatusItemSummary: Equatable {
         guard limits.isOn else { return StatusItemSummary(entries: [], nextChange: nil) }
         let summarised = snapshots.filter { snapshot in
             canSummarise(snapshot) && limits.isChosen(snapshot.id)
-        }.prefix(entryLimit)
+        }
         var marks: [ProviderGlyph: Int] = [:]
         for snapshot in summarised { marks[snapshot.glyph, default: 0] += 1 }
         let entries = summarised.map { snapshot in
@@ -101,9 +96,7 @@ struct StatusItemSummary: Equatable {
             percent = Percent.whole(for: fraction) + "%"
         }
         let countdown = window?.resetsAt.flatMap { ResetCopy.countdown(to: $0, now: now) }
-        let label = sharesMark
-            ? ClaudeProfile.slug(fromProviderID: snapshot.id) ?? CodexProfile.slug(fromProviderID: snapshot.id)
-            : nil
+        let label = sharesMark ? accountLabel(for: snapshot) : nil
         let weeklyWindow = showingWeeklyLimit ? snapshot.weeklyLimitWindow : nil
         let weeklyIsOver = weeklyWindow?.resetsAt.map { $0 <= now } ?? false
         let weeklyFraction = weeklyIsOver ? nil : weeklyWindow?.usedFraction.flatMap { fraction in
@@ -130,6 +123,20 @@ struct StatusItemSummary: Equatable {
             weeklyFraction: weeklyFraction,
             detail: detail
         )
+    }
+
+    /// A duplicate provider mark must still identify the account it belongs
+    /// to. Prefer the visible name because it already contains the user's
+    /// nickname; fall back to every built-in profile family's stable slug.
+    private static func accountLabel(for snapshot: ProviderSnapshot) -> String {
+        let defaultNames = ["Claude", "Codex", "Antigravity"]
+        if !defaultNames.contains(snapshot.displayName) {
+            return snapshot.displayName
+        }
+        return ClaudeProfile.slug(fromProviderID: snapshot.id)
+            ?? CodexProfile.slug(fromProviderID: snapshot.id)
+            ?? AntigravityProfile.slug(fromProviderID: snapshot.id)
+            ?? snapshot.displayName
     }
 
     /// The bar's figures with the words it has no room for: whose they are,

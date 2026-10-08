@@ -58,6 +58,7 @@ final class AntigravityProfileTests: XCTestCase {
         XCTAssertTrue(AntigravityProfile.isAntigravity(providerID: "gemini"))
         XCTAssertTrue(AntigravityProfile.isAntigravity(providerID: "antigravity-work"))
         XCTAssertTrue(AntigravityProfile.isAntigravity(providerID: "antigravity-alpha"))
+        XCTAssertTrue(AntigravityProfile.isAntigravity(providerID: "antigravity-managed-550e8400-e29b-41d4-a716-446655440000"))
         XCTAssertFalse(AntigravityProfile.isAntigravity(providerID: "gemini-api"))
         XCTAssertFalse(AntigravityProfile.isAntigravity(providerID: "gemini-work"))
         XCTAssertFalse(AntigravityProfile.isAntigravity(providerID: "geminiapi"))
@@ -70,6 +71,15 @@ final class AntigravityProfileTests: XCTestCase {
         XCTAssertNil(AntigravityProfile.slug(fromProviderID: "gemini-api"))
         XCTAssertNil(AntigravityProfile.slug(fromProviderID: "antigravity-"))
         XCTAssertNil(AntigravityProfile.slug(fromProviderID: "cursor"))
+    }
+
+    func testManagedProfileUsesStableUUIDIdentity() {
+        let id = UUID(uuidString: "550E8400-E29B-41D4-A716-446655440000")!
+        let profile = AntigravityProfile(slug: nil, configDirectory: URL(fileURLWithPath: "/tmp/account"),
+                                         managedAccountID: id, managedName: "Work", managedEmail: "me@example.com")
+        XCTAssertEqual(profile.id, "antigravity-managed-550e8400-e29b-41d4-a716-446655440000")
+        XCTAssertEqual(profile.displayName, "Antigravity (Work)")
+        XCTAssertEqual(profile.sourceName, L10n.t("Codenotch Antigravity OAuth"))
     }
 
     func testDirectorySlugsIgnoreInternalFlavours() {
@@ -149,10 +159,10 @@ final class AntigravityProfileTests: XCTestCase {
         XCTAssertFalse(Preferences.isDefaultOnFamily("antigravity-work"), "Antigravity profile must start off")
         XCTAssertFalse(Preferences.isDefaultOnFamily("antigravity-personal"), "Antigravity profile must start off")
         XCTAssertFalse(Preferences.isDefaultOnFamily("gemini-api"), "gemini-api must start off")
-        XCTAssertTrue(Preferences.isDefaultOnFamily("claude"), "Claude defaults on")
-        XCTAssertTrue(Preferences.isDefaultOnFamily("claude-work"), "Claude profiles default on")
-        XCTAssertTrue(Preferences.isDefaultOnFamily("codex"), "Codex defaults on")
-        XCTAssertTrue(Preferences.isDefaultOnFamily("codex-work"), "Codex profiles default on")
+        XCTAssertFalse(Preferences.isDefaultOnFamily("claude"), "Claude waits for sign-in")
+        XCTAssertFalse(Preferences.isDefaultOnFamily("claude-work"), "Claude profiles wait for sign-in")
+        XCTAssertFalse(Preferences.isDefaultOnFamily("codex"), "Codex waits for sign-in")
+        XCTAssertFalse(Preferences.isDefaultOnFamily("codex-work"), "Codex profiles wait for sign-in")
     }
 
     // MARK: - Activity Monitor Roots

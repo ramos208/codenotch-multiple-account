@@ -10,8 +10,8 @@ import Foundation
 /// rather than polling into the limit, and every failure degrades to a status
 /// the UI can render honestly.
 actor ApifyProvider: UsageProvider {
-    nonisolated let id = "apify"
-    nonisolated let displayName = "Apify"
+    nonisolated let id: String
+    nonisolated let displayName: String
     nonisolated let glyph = ProviderGlyph.apify
 
     private let session: URLSession
@@ -20,16 +20,19 @@ actor ApifyProvider: UsageProvider {
     private let now: @Sendable () -> Date
     private var retryNoEarlierThan: Date?
 
-    init(session: URLSession = .shared, archive: UsageArchive = UsageArchive(),
+    init(id: String = "apify", displayName: String = "Apify",
+         session: URLSession = .shared, archive: UsageArchive = UsageArchive(),
          sources: ApifyCredentialSources = ApifyCredentialSources(),
          now: @escaping @Sendable () -> Date = { Date() }) {
+        self.id = id
+        self.displayName = displayName
         self.session = session
         self.archive = archive
         self.sources = sources
         self.now = now
         // Pick the back-off up where the last run left it, so relaunching
         // during a penalty does not spend an attempt extending it.
-        retryNoEarlierThan = archive.loadBackoffUntil(providerID: "apify")
+        retryNoEarlierThan = archive.loadBackoffUntil(providerID: id)
     }
 
     nonisolated var signInRoute: SignInRoute {

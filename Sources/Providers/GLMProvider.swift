@@ -9,12 +9,14 @@ import os
 /// failure degrades to a status the UI can render honestly, and a 429 backs off
 /// on a schedule that outlives the process rather than polling into the limit.
 actor GLMProvider: UsageProvider {
-    nonisolated let id = "glm"
-    nonisolated let displayName = "GLM"
+    nonisolated let id: String
+    nonisolated let displayName: String
     nonisolated let glyph = ProviderGlyph.glm
 
     private let session: URLSession
     private let archive: UsageArchive
+    nonisolated private let loadCredentials: @Sendable () -> GLMCredentials.Credential?
+    private let detectsStartPlan: @Sendable () -> Bool
     /// Set when the endpoint returns 429. Until it passes, refreshes are
     /// skipped without touching the network — the same bargain Claude's makes.
     private var retryNoEarlierThan: Date?
@@ -27,9 +29,16 @@ actor GLMProvider: UsageProvider {
     /// one row-draw.
     nonisolated(unsafe) private var lastKnownPlan: String?
 
-    init(session: URLSession = .shared, archive: UsageArchive = UsageArchive()) {
+    init(id: String = "glm", displayName: String = "GLM",
+         session: URLSession = .shared, archive: UsageArchive = UsageArchive(),
+         loadCredentials: @escaping @Sendable () -> GLMCredentials.Credential? = { GLMCredentials.load() },
+         detectsStartPlan: @escaping @Sendable () -> Bool = { GLMCredentials.zcodeHasStartPlan() }) {
+        self.id = id
+        self.displayName = displayName
         self.session = session
         self.archive = archive
+        self.loadCredentials = loadCredentials
+        self.detectsStartPlan = detectsStartPlan
         self.retryNoEarlierThan = archive.loadBackoffUntil(providerID: id)
     }
 
@@ -43,7 +52,7 @@ actor GLMProvider: UsageProvider {
     }
 
     nonisolated func account() -> ProviderAccount? {
-        guard let credentials = GLMCredentials.load() else { return nil }
+        guard let credentials = loadCredentials() else { return nil }
         return ProviderAccount(
             label: nil,   // none of the borrowed keys carries an address
             plan: lastKnownPlan,
@@ -64,8 +73,8 @@ actor GLMProvider: UsageProvider {
         // Re-read on every fetch. These are ordinary files, not keychain items:
         // reading them puts no prompt in front of anyone, which is why this
         // provider needs none of Claude's credential caching.
-        guard let credentials = GLMCredentials.load() else {
-            if GLMCredentials.zcodeHasStartPlan() {
+        guard let credentials = loadCredentials() else {
+            if detectsStartPlan() {
                 throw UsageProviderError.nothingMetered(
                     L10n.t("Z.ai does not publish usage for the GLM Start Plan yet, so there is nothing to read. The Coding Plan is supported.")
                 )

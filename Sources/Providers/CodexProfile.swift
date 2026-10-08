@@ -15,6 +15,12 @@ struct CodexProfile: Equatable, Hashable {
         CodexProfile(slug: nil, configDirectory: home.appendingPathComponent(directoryPrefix))
     }
 
+    /// The single source of truth for a named profile's on-disk location.
+    static func named(_ slug: String, home: URL = homeDirectory) -> CodexProfile {
+        CodexProfile(slug: slug,
+                     configDirectory: home.appendingPathComponent("\(directoryPrefix)-\(slug)"))
+    }
+
     static func discover(home: URL = homeDirectory,
                          fileManager: FileManager = .default) -> [CodexProfile] {
         let names = (try? fileManager.contentsOfDirectory(atPath: home.path)) ?? []
@@ -22,9 +28,27 @@ struct CodexProfile: Equatable, Hashable {
             guard let slug = slug(fromDirectoryName: name) else { return nil }
             let directory = home.appendingPathComponent(name)
             guard isProfileDirectory(directory, fileManager: fileManager) else { return nil }
-            return CodexProfile(slug: slug, configDirectory: directory)
+            return CodexProfile.named(slug, home: home)
         }
         return [.default(home: home)] + extras.sorted { $0.slug! < $1.slug! }
+    }
+
+    /// Profiles authenticated by Codenotch itself live in Application Support,
+    /// away from `~/.codex` and every external CLI profile.
+    static func discoverManaged(fileManager: FileManager = .default,
+                                root: URL = managedRoot()) -> [CodexProfile] {
+        let names = (try? fileManager.contentsOfDirectory(atPath: root.path)) ?? []
+        return names.sorted().compactMap { slug in
+            let directory = root.appendingPathComponent(slug, isDirectory: true)
+            guard fileManager.fileExists(atPath: directory.appendingPathComponent("auth.json").path)
+            else { return nil }
+            return CodexProfile(slug: "managed-\(slug)", configDirectory: directory)
+        }
+    }
+
+    static func managedRoot(fileManager: FileManager = .default) -> URL {
+        let support = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        return support.appendingPathComponent("Codenotch/Accounts/codex", isDirectory: true)
     }
 
     static func slug(fromDirectoryName name: String) -> String? {
@@ -48,6 +72,10 @@ struct CodexProfile: Equatable, Hashable {
 
     // Preserve the default id so existing readings and preferences survive.
     var id: String { slug.map { "\(Self.defaultID)-\($0)" } ?? Self.defaultID }
+
+    /// Managed accounts are authenticated by Codenotch's background helper,
+    /// never through Terminal or the provider GUI.
+    var isManaged: Bool { slug?.hasPrefix("managed-") == true }
 
     /// Whether a provider id names a Codex profile, default or otherwise.
     static func isCodex(providerID: String) -> Bool {

@@ -340,6 +340,79 @@ struct ProviderSnapshot: Identifiable, Equatable {
     /// the tooltip title. Nil when there is nothing to name.
     var plan: String? = nil
 
+    /// Compact provider name for the tooltip header. Managed account names
+    /// already end in the provider's full name ("Edgar Codex"); replacing
+    /// only that suffix keeps the person's label while preventing long names
+    /// such as Antigravity from being clipped.
+    var compactUsageTitle: String {
+        guard let identity = providerTitleIdentity else {
+            return L10n.t("\(displayName) Usage")
+        }
+        let lower = displayName.lowercased()
+        let provider = identity.name.lowercased()
+        let account: String
+        if lower == provider {
+            account = ""
+        } else if lower.hasSuffix(" " + provider) {
+            account = String(displayName.dropLast(identity.name.count + 1))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        } else {
+            account = displayName
+        }
+        return account.isEmpty
+            ? L10n.t("\(identity.code) Usage")
+            : L10n.t("\(account) \(identity.code) Usage")
+    }
+
+    /// The plan and a provider-reported monthly renewal date share the quiet
+    /// line directly below the title. A weekly/session reset must never be
+    /// described as the end of a subscription.
+    func subscriptionSubtitle(now: Date = Date()) -> String? {
+        let monthly = windows
+            .filter { window in
+                guard let reset = window.resetsAt, reset > now else { return false }
+                let key = "\(window.id) \(window.label)".lowercased()
+                let namedMonthly = key.contains("month") || key.contains("billing")
+                    || key.contains("subscription")
+                let monthlyDuration = window.duration.map { $0 >= 27 * 24 * 60 * 60 } ?? false
+                return namedMonthly || monthlyDuration
+            }
+            .compactMap(\.resetsAt)
+            .max()
+        let end = monthly.map { date in
+            let formatter = DateFormatter()
+            formatter.locale = L10n.locale
+            formatter.setLocalizedDateFormatFromTemplate(
+                Calendar.current.component(.year, from: date) == Calendar.current.component(.year, from: now)
+                    ? "MMMd" : "MMMdy"
+            )
+            return formatter.string(from: date)
+        }
+        switch (plan?.nonEmptyPlan, end) {
+        case let (plan?, end?): return L10n.t("\(plan) · Monthly ends \(end)")
+        case let (plan?, nil):  return plan
+        case let (nil, end?):   return L10n.t("Monthly subscription ends \(end)")
+        case (nil, nil):        return nil
+        }
+    }
+
+    private var providerTitleIdentity: (name: String, code: String)? {
+        let key = providerID.lowercased()
+        let identities: [(tokens: [String], name: String, code: String)] = [
+            (["opencode"], "OpenCode", "OC"), (["commandcode"], "Command Code", "CC"),
+            (["antigravity", "gemini"], "Antigravity", "AG"), (["codex"], "Codex", "CX"),
+            (["claude"], "Claude", "CL"), (["cursor"], "Cursor", "CR"),
+            (["deepseek"], "DeepSeek", "DS"), (["qianwen"], "QianwenAI", "QW"),
+            (["minimax"], "MiniMax", "MM"), (["copilot"], "GitHub Copilot", "GH"),
+            (["ollama"], "Ollama Cloud", "OL"), (["apify"], "Apify", "AP"),
+            (["grok"], "Grok", "GK"), (["kimi"], "Kimi", "KM"),
+            (["kiro"], "Kiro", "KR"), (["glm"], "GLM / Z.ai", "GL"),
+            (["kilo"], "Kilo", "KL"), (["amp"], "Amp", "AM"),
+        ]
+        return identities.first(where: { item in item.tokens.contains(where: key.contains) })
+            .map { ($0.name, $0.code) }
+    }
+
     /// Unused rate-limit resets reported for this account.
     var resetCredits: UsageResetCredits? = nil
 

@@ -74,6 +74,12 @@ actor AntigravityProvider: UsageProvider {
     }
 
     nonisolated func account() -> ProviderAccount? {
+        if let accountID = profile.managedAccountID,
+           AntigravityManagedCredentialsStore.exists(accountID: accountID) {
+            return ProviderAccount(label: profile.managedEmail ?? profile.managedName ?? "Google Account",
+                                   plan: L10n.t("Google OAuth"), source: profile.sourceName,
+                                   manageURL: URL(string: "https://myaccount.google.com"))
+        }
         if AntigravityCredentials.isSignedIn(for: profile), let held = AntigravityCredentials.held(for: profile) {
             let email = held.email
             let plan = held.authMethod == "consumer" ? L10n.t("Personal") : held.authMethod
@@ -98,6 +104,14 @@ actor AntigravityProvider: UsageProvider {
     }
 
     func fetchSnapshot() async throws -> ProviderSnapshot {
+        if let accountID = profile.managedAccountID {
+            let credentials = try await AntigravityManagedOAuth.validCredentials(accountID: accountID, session: session)
+            guard let windows = try await quota(token: credentials.accessToken, project: credentials.projectID),
+                  !windows.isEmpty else { throw UsageProviderError.credentialExpired }
+            return ProviderSnapshot(id: id, displayName: displayName, glyph: glyph,
+                                    fidelity: .official, status: .ok, windows: windows,
+                                    headlineID: resolveHeadlineID(for: windows), weeklyID: resolveWeeklyID(for: windows))
+        }
         // Antigravity's own language server first, before anything is asked of
         // the keychain. It already holds the credential and the client identity
         // Google insists on, and answers with the same figure Antigravity's own
@@ -108,7 +122,7 @@ actor AntigravityProvider: UsageProvider {
         // not need: someone who dismissed the keychain prompt got `accessDenied`
         // and an empty ring, while the server that would have answered sat
         // running on the same machine, never asked.
-        if profile.slug == nil {
+        if profile.slug == nil && profile.managedAccountID == nil {
             if let windows = await localQuota(), !windows.isEmpty {
                 everBridged = true
                 UserDefaults.standard.set(true, forKey: "AntigravityEverBridged")

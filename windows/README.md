@@ -1,6 +1,6 @@
 # Codenotch for Windows
 
-A Windows port of [Codenotch](https://github.com/vinzdg/codenotch) — the usage notch that
+A Windows port of [Codenotch](https://github.com/ramos208/codenotch-multiple-account) — the usage notch that
 sits on the edge of your screen and answers two questions at a glance:
 **how much of my AI allowance is left**, and **is Claude still working**.
 
@@ -94,7 +94,7 @@ shows an error or the last reading marked stale. Codenotch does not automate sig
 
 ## Install / build
 
-Download [`Codenotch-Setup.exe`](https://github.com/vinzdg/codenotch/releases/latest/download/Codenotch-Setup.exe)
+Download [`Codenotch-Setup.exe`](https://github.com/ramos208/codenotch-multiple-account/releases/latest/download/Codenotch-Setup.exe)
 from the latest release. It installs for the current user without administrator rights, puts
 `codenotch-hook.exe` beside the app where **Install hooks** looks for it, and fetches WebView2 if
 Windows does not already have it. The installer is not code-signed, so SmartScreen stops it the

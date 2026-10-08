@@ -63,6 +63,49 @@ final class UsageStore: ObservableObject {
         refreshNow()
     }
 
+    /// Replace the three profile-backed provider families after account
+    /// discovery changes. Existing snapshots survive by stable profile id;
+    /// only genuinely new accounts receive placeholders.
+    func registerProfileProviders(_ profileProviders: [UsageProvider]) {
+        let incomingIDs = Set(profileProviders.map(\.id))
+        let oldIDs = Set(providers.filter { Self.isProfileProviderID($0.id) }.map(\.id))
+        providers.removeAll { Self.isProfileProviderID($0.id) }
+        providers.append(contentsOf: profileProviders)
+
+        let removed = oldIDs.subtracting(incomingIDs)
+        snapshots.removeAll { removed.contains($0.id) }
+        for id in removed {
+            disconnected.remove(id)
+            lastGood.removeValue(forKey: id)
+        }
+        for provider in profileProviders
+        where !disconnected.contains(provider.id) && !snapshots.contains(where: { $0.id == provider.id }) {
+            publish(Self.placeholder(provider))
+        }
+        archive.save(lastGood)
+        providerAccountRevision &+= 1
+        refreshNow()
+    }
+
+    private static func isProfileProviderID(_ id: String) -> Bool {
+        ClaudeProfile.isClaude(providerID: id)
+            || CodexProfile.isCodex(providerID: id)
+            || AntigravityProfile.isAntigravity(providerID: id)
+            || id.hasPrefix("deepseek-managed-")
+            || id.hasPrefix("qianwenai-managed-")
+            || id.hasPrefix("minimax-managed-")
+            || id.hasPrefix("ollama-managed-")
+            || id.hasPrefix("apify-managed-")
+            || id.hasPrefix("glm-managed-")
+            || id.hasPrefix("amp-managed-")
+            || id.hasPrefix("kilo-managed-")
+            || id.hasPrefix("opencode-managed-")
+            || id.hasPrefix("copilot-managed-")
+            || id.hasPrefix("cursor-managed-")
+            || id.hasPrefix("grok-managed-")
+            || id.hasPrefix("kimi-managed-")
+    }
+
     /// Provider ids plus any model cells currently on screen.
     var knownIDs: [String] {
         Array(Set(providers.map(\.id) + snapshots.map(\.id) + localModelSummaries.map(\.id)))
@@ -303,7 +346,13 @@ final class UsageStore: ObservableObject {
             let summary = ProviderSummary(kind: provider.kind, id: provider.id, name: provider.displayName,
                             glyph: provider.glyph,
                             customIconFilename: provider.customIconFilename,
-                            account: disconnected.contains(provider.id) ? nil : provider.account(),
+                            // A display toggle must not erase the account's
+                            // identity from Settings. Keeping this metadata
+                            // lets the UI distinguish an authenticated account
+                            // whose ring is off from a provider that has never
+                            // been signed in. `account()` is local metadata and
+                            // does not fetch usage or reconnect the provider.
+                            account: provider.account(),
                             signIn: provider.signInRoute,
                             wasRefusedAccess: refusedAccess.contains(provider.id),
                             needsSignInRenewal: needsRenewal.contains(provider.id))
@@ -665,13 +714,20 @@ final class UsageStore: ObservableObject {
     /// did not ask us to touch. `SignInRoute.signOutCaveat` says so on the row.
     func signOut(providerID: String) {
         guard let provider = providers.first(where: { $0.id == providerID }) else { return }
+        forgetAccountData(providerID: providerID)
+
+        Task { await provider.signOut() }
+    }
+
+    /// Forget Codenotch's in-memory and archived reading for a deleted managed
+    /// account. Unlike `signOut`, this does not require the provider to remain
+    /// registered and does not touch credentials owned by another app.
+    func forgetAccountData(providerID: String) {
         cancelRefresh(providerID: providerID)
         refusedAccess.remove(providerID)
         snapshots.removeAll { $0.id == providerID }
         lastGood.removeValue(forKey: providerID)
         archive.forget(providerID)
-
-        Task { await provider.signOut() }
     }
 
     /// Take the user to wherever this provider's account is signed into.
@@ -694,6 +750,21 @@ final class UsageStore: ObservableObject {
         }
 
         return openAccountSource(providerID: providerID)
+    }
+
+    /// A stricter signal than the descriptive `ProviderAccount` used by rows.
+    /// Some tools retain an email/username after their token is removed; Add
+    /// Account must not treat that leftover identity as successful login.
+    func hasUsableAuthentication(providerID: String) -> Bool {
+        guard let provider = providers.first(where: { $0.id == providerID }) else { return false }
+        switch providerID {
+        case "cursor":
+            return (try? CursorCredentials.load()) != nil
+        case "copilot":
+            return (try? GitHubCopilotCredentials.load()) != nil
+        default:
+            return provider.account() != nil
+        }
     }
 
     /// Tell consumers that a provider has just confirmed authentication. The
